@@ -21,7 +21,7 @@ struct EmberBarApp: App {
                 .environmentObject(mug)
                 .onAppear { delegate.mug = mug }
         } label: {
-            MenuLabel(mug: mug)
+            MenuLabel(mug: mug, clock: mug.iconClock)
                 .onAppear { delegate.mug = mug }
         }
         .menuBarExtraStyle(.window)
@@ -37,13 +37,70 @@ struct EmberBarApp: App {
 
 struct MenuLabel: View {
     @ObservedObject var mug: MugManager
+    @ObservedObject var clock: IconClock
     var body: some View {
-        HStack(spacing: 3) {
-            Image(systemName: mug.pulsing || mug.state == .heating ? "cup.and.heat.waves.fill" : "cup.and.saucer.fill")
-            if mug.link == .connected, mug.state.hasLiquid {
-                Text(mug.unit.format(mug.temp))
-            }
+        let phase = mug.phase
+        let showTemps = phase != .unavailable
+        Image(nsImage: StatusIcon.image(phase: phase,
+                                        temp: showTemps ? mug.unit.format(mug.temp) : nil,
+                                        goal: showTemps ? mug.goal.map { "→" + mug.unit.format($0) } : nil,
+                                        frame: clock.frame))
+    }
+}
+
+/// The menu-bar icon: a cup tinted by what the heater is doing, the coffee's temperature and, under it in
+/// smaller type, the goal. Drawn at display time so the text follows the menu bar's light or dark look.
+enum StatusIcon {
+    static func tint(_ phase: HeaterPhase) -> NSColor {
+        switch phase {
+        case .unavailable: .labelColor
+        case .heating, .holding: .systemOrange
+        case .coolingToGoal: .systemBlue
+        case .resting: .systemPurple
+        case .heaterOff: .systemTeal
         }
+    }
+
+    /// Breathing, in frames of 1/6 s: quicker while heating, slow while cooling down. Nil = steady.
+    static func period(_ phase: HeaterPhase) -> Double? {
+        switch phase {
+        case .heating: 10
+        case .coolingToGoal: 18
+        default: nil
+        }
+    }
+
+    static func image(phase: HeaterPhase, temp: String?, goal: String?, frame: Int) -> NSImage {
+        let symbolName = phase == .heating ? "cup.and.heat.waves.fill" : "cup.and.saucer.fill"
+        let config = NSImage.SymbolConfiguration(pointSize: 13, weight: .regular)
+            .applying(.init(paletteColors: [tint(phase)]))
+        let symbol = NSImage(systemSymbolName: symbolName, accessibilityDescription: "Ember mug")?
+            .withSymbolConfiguration(config) ?? NSImage()
+        let alpha = period(phase).map { 0.55 + 0.45 * (0.5 + 0.5 * cos(2 * .pi * Double(frame) / $0)) } ?? 1
+
+        let big = NSFont.monospacedDigitSystemFont(ofSize: goal == nil ? 13 : 10.5, weight: goal == nil ? .regular : .semibold)
+        let small = NSFont.monospacedDigitSystemFont(ofSize: 8.5, weight: .regular)
+        let tempWidth = temp.map { ($0 as NSString).size(withAttributes: [.font: big]).width } ?? 0
+        let goalWidth = goal.map { ($0 as NSString).size(withAttributes: [.font: small]).width } ?? 0
+        let textWidth = ceil(max(tempWidth, goalWidth))
+        let height: CGFloat = 22
+        let size = NSSize(width: symbol.size.width + (textWidth > 0 ? 3 + textWidth : 0), height: height)
+
+        let image = NSImage(size: size, flipped: false) { _ in
+            symbol.draw(at: NSPoint(x: 0, y: (height - symbol.size.height) / 2), from: .zero, operation: .sourceOver, fraction: alpha)
+            let x = symbol.size.width + 3
+            if let goal, let temp {
+                (temp as NSString).draw(at: NSPoint(x: x, y: 9), withAttributes: [.font: big, .foregroundColor: NSColor.labelColor])
+                (goal as NSString).draw(at: NSPoint(x: x, y: 0.5), withAttributes: [.font: small, .foregroundColor: NSColor.secondaryLabelColor])
+            } else if let temp {
+                (temp as NSString).draw(at: NSPoint(x: x, y: (height - big.boundingRectForFont.height) / 2 + 1),
+                                        withAttributes: [.font: big, .foregroundColor: NSColor.labelColor])
+            }
+            return true
+        }
+        image.isTemplate = phase == .unavailable
+        image.accessibilityDescription = ["Ember mug", temp, goal.map { "goal \($0.dropFirst())" }].compactMap { $0 }.joined(separator: ", ")
+        return image
     }
 }
 
@@ -52,20 +109,51 @@ struct MenuLabel: View {
 extension MugManager {
     var statusLine: String {
         guard link == .connected else { return link.label }
-        if !state.hasLiquid { return "Empty" }
-        if pulsing { return "Warming gently" }
-        if let g = goal, let t = temp, t > g + 0.5 { return "Cooling toward \(unit.format(g))" }
-        if goal != nil { return "Holding" }
-        return "Heater off, cooling naturally"
+        switch phase {
+        case .unavailable: return "Empty"
+        case .heating: return pulsing ? "Warming gently" : "Heating"
+        case .coolingToGoal: return "Cooling toward \(unit.format(goal))"
+        case .resting: return "Heater resting between bursts"
+        case .holding: return "Holding"
+        case .heaterOff: return "Heater off, cooling naturally"
+        }
     }
 
     func modeDescription(_ mode: Mode) -> String {
         switch mode {
         case .off: return "Heater off"
-        case .hold(let t): return "Hold \(unit.format(t))" + (t < MugLimits.floor ? " (pulsed)" : "")
+        case .hold(let t): return "Hold \(unit.dual(t))" + pulsedSuffix(mode)
         case .glide(let steps):
             return steps.map { unit.format($0.target) + ($0.minutes.map { " \(Int($0))m" } ?? "") }.joined(separator: " → ")
         }
+    }
+
+    func pulsedSuffix(_ mode: Mode) -> String { mode.isCycling ? ", pulsed" : "" }
+
+    /// "≈ 112°F / 44°C avg" for modes Ember Bar cycles (the coffee swings, so the target alone misleads).
+    func averageNote(_ mode: Mode) -> String? {
+        guard mode.isCycling, let a = controller.approxAverage(mode) else { return nil }
+        if case .glide = mode { return "≈ \(unit.dual(a)) avg over a 30-min cup" }
+        return "≈ \(unit.dual(a)) avg"
+    }
+
+    /// Short lines for a preset button: the temperature it holds in both units, then its average when it cycles.
+    func presetCaption(_ mode: Mode) -> [String] {
+        let avg = mode.isCycling ? controller.approxAverage(mode).map { "≈ \(unit.format($0))\(unit.rawValue) avg" } : nil
+        switch mode {
+        case .off: return ["heater off"]
+        case .hold(let t): return [unit.dual(t)] + [avg].compactMap { $0 }
+        case .glide: return ["glide"] + [avg].compactMap { $0 }
+        }
+    }
+}
+
+extension EmberCodec.RGB {
+    var color: Color { Color(red: Double(r) / 255, green: Double(g) / 255, blue: Double(b) / 255) }
+    init?(_ color: Color) {
+        guard let ns = NSColor(color).usingColorSpace(.sRGB) else { return nil }
+        self.init(r: UInt8((ns.redComponent * 255).rounded()), g: UInt8((ns.greenComponent * 255).rounded()),
+                  b: UInt8((ns.blueComponent * 255).rounded()))
     }
 }
 
@@ -132,7 +220,7 @@ struct CompactView: View {
                 Text(mug.unit.format(mug.temp, decimals: 1)).font(.system(size: 40, weight: .semibold, design: .rounded))
                 VStack(alignment: .leading) {
                     Text(mug.statusLine).font(.callout)
-                    if let g = mug.goal { Text("Goal \(mug.unit.format(g))").font(.caption).foregroundStyle(.secondary) }
+                    if let g = mug.goal { Text("Goal \(mug.unit.dual(g))").font(.caption).foregroundStyle(.secondary) }
                 }
             }
 
@@ -144,21 +232,31 @@ struct CompactView: View {
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 6) {
                 ForEach(mug.presets) { p in
                     Button { mug.apply(p) } label: {
-                        Text(p.name).frame(maxWidth: .infinity)
+                        VStack(spacing: 1) {
+                            Text(p.name)
+                            ForEach(mug.presetCaption(p.mode), id: \.self) {
+                                Text($0).font(.caption2).foregroundStyle(.secondary)
+                            }
+                        }
+                        .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.bordered)
                     .tint(mug.activePresetID == p.id && mug.mode == p.mode ? .orange : nil)
-                    .help(mug.modeDescription(p.mode))
+                    .help([mug.modeDescription(p.mode), mug.averageNote(p.mode)].compactMap { $0 }.joined(separator: "\n"))
                 }
             }
 
             VStack(alignment: .leading, spacing: 4) {
-                Text("Hold at \(mug.unit.format(holdC))").font(.caption)
+                Text("Hold at \(mug.unit.dual(holdC))" + (mug.averageNote(.hold(holdC)).map { ", pulsed, \($0)" } ?? "")).font(.caption)
                 TempSlider(celsius: _holdC.projectedValue) { mug.setHold(celsius: $0) }
             }
 
             HStack {
-                Text("Now: \(mug.modeDescription(mug.mode))").font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Now: \(mug.modeDescription(mug.mode))").lineLimit(1)
+                    if let avg = mug.averageNote(mug.mode) { Text(avg).lineLimit(1) }
+                }
+                .font(.caption).foregroundStyle(.secondary)
                 Spacer()
                 if let b = mug.battery {
                     Label("\(b.percent)%", systemImage: b.charging ? "battery.100.bolt" : "battery.75")
@@ -213,6 +311,7 @@ struct NowPage: View {
                     VStack(alignment: .leading) {
                         Text(mug.statusLine).font(.title3)
                         Text("Mode: \(mug.modeDescription(mug.mode))").foregroundStyle(.secondary)
+                        if let avg = mug.averageNote(mug.mode) { Text(avg).foregroundStyle(.secondary) }
                         if let t = mug.mugTarget {
                             Text("Mug's own target: \(t == 0 ? "off" : mug.unit.format(t))").font(.caption).foregroundStyle(.secondary)
                         }
@@ -250,7 +349,10 @@ struct NowPage: View {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 150))], spacing: 8) {
                     ForEach(mug.presets) { p in
                         Button { mug.apply(p) } label: {
-                            VStack { Text(p.name).bold(); Text(mug.modeDescription(p.mode)).font(.caption).lineLimit(2) }
+                            VStack {
+                                Text(p.name).bold()
+                                Text(mug.presetCaption(p.mode).joined(separator: " · ")).font(.caption).lineLimit(2)
+                            }
                                 .frame(maxWidth: .infinity, minHeight: 44)
                         }
                         .buttonStyle(.bordered)
@@ -274,9 +376,11 @@ struct PresetsPage: View {
             Section {
                 ForEach(mug.presets) { p in
                     HStack {
+                        if let light = p.light { Circle().fill(light.color).frame(width: 10, height: 10) }
                         VStack(alignment: .leading) {
                             Text(p.name).bold()
                             Text(mug.modeDescription(p.mode)).font(.caption).foregroundStyle(.secondary)
+                            if let avg = mug.averageNote(p.mode) { Text(avg).font(.caption).foregroundStyle(.secondary) }
                         }
                         Spacer()
                         Button("Use") { mug.apply(p) }
@@ -297,7 +401,7 @@ struct PresetsPage: View {
                     Button("Restore defaults") { mug.presets = Preset.defaults }
                 }
             } footer: {
-                Text("Below \(mug.unit.format(MugLimits.floor)) the mug won't hold a temperature by itself, so Ember Bar switches the heater on in short bursts while the Mac is near the mug. A glide steps the goal down over time, counted from when you pour.")
+                Text("Below \(mug.unit.dual(MugLimits.lowestHeld)) the mug won't hold a temperature by itself, so Ember Bar switches the heater on in short bursts while the Mac is near the mug. The coffee swings a little around the goal, so those presets show an approximate average. A glide steps the goal down over time, counted from when you pour.")
             }
         }
         .sheet(item: _editing.projectedValue) { p in
@@ -333,8 +437,9 @@ struct PresetEditor: View {
                 Text("Heater stays off; the coffee cools on its own.")
             case .hold(let t):
                 let binding = Binding(get: { t }, set: { preset.mode = .hold($0) })
-                Text("Hold at \(mug.unit.format(t))")
+                Text("Hold at \(mug.unit.dual(t))" + mug.pulsedSuffix(preset.mode))
                 TempSlider(celsius: binding)
+                if let avg = mug.averageNote(preset.mode) { Text(avg).font(.caption).foregroundStyle(.secondary) }
             case .glide(let steps):
                 Text("Steps, counted from when you pour").font(.headline)
                 ForEach(Array(steps.enumerated()), id: \.offset) { i, step in
@@ -344,11 +449,22 @@ struct PresetEditor: View {
                         var s = steps; s.remove(at: i); preset.mode = .glide(s)
                     }
                 }
+                if let avg = mug.averageNote(preset.mode) { Text(avg).font(.caption).foregroundStyle(.secondary) }
                 Button("Add step") {
                     var s = steps
                     if let last = s.indices.last, s[last].minutes == nil { s[last].minutes = 10 }
                     s.append(GlideStep(target: max(30, (s.last?.target ?? 45) - 3), minutes: nil))
                     preset.mode = .glide(s)
+                }
+            }
+            HStack {
+                Toggle("Own mug light color", isOn: Binding(
+                    get: { preset.light != nil },
+                    set: { preset.light = $0 ? (mug.homeLight ?? .init(r: 255, g: 140, b: 0)) : nil }))
+                if let light = preset.light {
+                    ColorPicker("", selection: Binding(get: { light.color },
+                                                       set: { if let c = EmberCodec.RGB($0) { preset.light = c } }),
+                                supportsOpacity: false).labelsHidden()
                 }
             }
             HStack {
@@ -372,7 +488,7 @@ struct GlideStepRow: View {
     var body: some View {
         VStack(alignment: .leading) {
             HStack {
-                Text(mug.unit.format(step.target)).frame(width: 44, alignment: .leading)
+                Text(mug.unit.dual(step.target)).frame(width: 92, alignment: .leading)
                 TempSlider(celsius: Binding(get: { step.target }, set: { var s = step; s.target = $0; change(s) }))
                 Button(role: .destructive, action: remove) { Image(systemName: "minus.circle") }.buttonStyle(.borderless)
             }
@@ -401,15 +517,15 @@ struct MugPage: View {
                     Text("°F").tag(TempUnit.fahrenheit); Text("°C").tag(TempUnit.celsius)
                 }.pickerStyle(.segmented)
             }
-            Section("LED") {
-                ColorPicker("Mug light", selection: Binding(
-                    get: { mug.led.map { Color(red: Double($0.r) / 255, green: Double($0.g) / 255, blue: Double($0.b) / 255) } ?? .white },
-                    set: { c in
-                        guard let ns = NSColor(c).usingColorSpace(.sRGB) else { return }
-                        mug.setLED(.init(r: UInt8(ns.redComponent * 255), g: UInt8(ns.greenComponent * 255), b: UInt8(ns.blueComponent * 255)))
-                    }), supportsOpacity: false)
+            Section("Light") {
+                ColorPicker("Everyday mug light", selection: Binding(
+                    get: { (mug.homeLight ?? mug.led)?.color ?? .white },
+                    set: { if let c = EmberCodec.RGB($0) { mug.setHomeLight(c) } }), supportsOpacity: false)
+                Toggle("Slow blink while Ember Bar cycles the heater", isOn: $mug.blinkWhileCycling)
+                Text("A preset can have its own light color: Presets & cycles, Edit. It blinks, 6 seconds bright and 6 dim, whenever Ember Bar is pulsing the heater toward the goal.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
-            Section("Gentle heating (below \(mug.unit.format(MugLimits.floor)))") {
+            Section("Gentle heating (below \(mug.unit.dual(MugLimits.lowestHeld)))") {
                 LabeledContent("Heater comes on") {
                     Stepper(String(format: "%.1f° below goal", mug.controller.band * (mug.unit == .celsius ? 1 : 1.8)),
                             value: $mug.controller.band, in: 0.3...3, step: 0.1)

@@ -2,7 +2,7 @@
 # Build Ember Bar, wrap it as a menu-bar .app, install it in /Applications and (re)launch it.
 set -euo pipefail
 cd "$(dirname "$0")"
-# Run the tests separately with: swift test
+# Run the tests separately with: ./test.sh
 swift build -c release
 APP="build/Ember Bar.app"
 rm -rf "$APP"

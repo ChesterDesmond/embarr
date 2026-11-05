@@ -19,8 +19,16 @@ public enum EmberUUID {
 }
 
 public enum MugLimits {
-    /// Lowest target the firmware keeps (measured: 45.0 kept, 44.5 and below reset to 48.88).
-    public static let floor = 45.0
+    /// Lowest target value the firmware accepts (measured: 45.0 kept, 44.5 and below reset to 48.88).
+    /// The app writes it to switch the heater on during pulses. Accepting it is not holding it: see `lowestHeld`.
+    public static let pulseOn = 45.0
+    /// Lowest temperature the mug actually holds by itself (120 F). Measured 2026-11-05 with coffee in the
+    /// mug: target 45.00 read back as 45.00, yet the mug reported "Holding" at 48.89 for two hours.
+    /// Any goal below this is reached by pulsing.
+    public static let lowestHeld = 48.89
+    /// Whether Ember Bar has to pulse the heater to reach `goal`, because the mug won't hold it by itself.
+    /// The 0.01 slack keeps 120 F (48.8889 C, a whole-degree Fahrenheit slider stop) with the mug.
+    public static func needsPulsing(_ goal: Double) -> Bool { goal < lowestHeld - 0.01 }
     /// Highest target the app offers (145 F).
     public static let ceiling = 62.5
     /// Value that turns the heater off.
@@ -79,7 +87,7 @@ public enum EmberCodec {
         return "firmware \(u16(0)), hardware \(u16(2))"
     }
 
-    public struct RGB: Equatable, Codable, Sendable {
+    public struct RGB: Equatable, Hashable, Codable, Sendable {
         public var r: UInt8, g: UInt8, b: UInt8
         public init(r: UInt8, g: UInt8, b: UInt8) { self.r = r; self.g = g; self.b = b }
     }
@@ -91,6 +99,14 @@ public enum EmberCodec {
     }
 
     public static func encodeLED(_ c: RGB) -> Data { Data([c.r, c.g, c.b, 0xFF]) }
+}
+
+extension EmberCodec.RGB {
+    /// The same hue at `fraction` of the brightness (used for the slow blink).
+    public func dimmed(_ fraction: Double) -> Self {
+        func f(_ v: UInt8) -> UInt8 { UInt8((Double(v) * fraction).rounded()) }
+        return .init(r: f(r), g: f(g), b: f(b))
+    }
 }
 
 public enum TempUnit: String, Codable, CaseIterable, Sendable {
@@ -107,5 +123,11 @@ public enum TempUnit: String, Codable, CaseIterable, Sendable {
     public func format(_ celsius: Double?, decimals: Int = 0) -> String {
         guard let c = celsius else { return "--°" }
         return String(format: "%.\(decimals)f°", display(c))
+    }
+
+    /// Both scales, this unit first: "113°F / 45°C".
+    public func dual(_ celsius: Double) -> String {
+        let other: TempUnit = self == .celsius ? .fahrenheit : .celsius
+        return "\(format(celsius))\(rawValue) / \(other.format(celsius))\(other.rawValue)"
     }
 }

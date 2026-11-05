@@ -29,7 +29,9 @@ final class MugManager: NSObject, ObservableObject {
     }
 
     // Live readings
-    @Published var link: Link = .scanning { didSet { if link != oldValue { log("link: \(link.label)") } } }
+    @Published var link: Link = .scanning {
+        didSet { if link != oldValue { log("link: \(link.label)"); updateIconAnimation() } }
+    }
     @Published var name = "Ember mug"
     @Published var temp: Double?
     @Published var mugTarget: Double?
@@ -48,6 +50,12 @@ final class MugManager: NSObject, ObservableObject {
     @Published var presets: [Preset] { didSet { save() } }
     @Published var unit: TempUnit { didSet { save() } }
     @Published var controller: HeaterController
+    /// The mug's everyday light color, used whenever the active preset has no color of its own.
+    @Published var homeLight: EmberCodec.RGB? { didSet { save() } }
+    /// Slowly blink the mug's light while Ember Bar is cycling the heater (pulsed holds and glides).
+    @Published var blinkWhileCycling: Bool { didSet { save() } }
+    /// Drives the menu-bar icon's breathing. Kept off MugManager's own @Published values so only the icon redraws.
+    let iconClock = IconClock()
 
     private var central: CBCentralManager!
     private var peripheral: CBPeripheral?
@@ -58,20 +66,28 @@ final class MugManager: NSObject, ObservableObject {
     private var lastWrite: (value: Double, at: Date)?
     private var verifying: (value: Double, retried: Bool)?
     private var warnedBattery = false
+    private var lastLight: EmberCodec.RGB?
     private var loading = true
 
     private let defaults = UserDefaults.standard
+    /// What a fresh install starts on: "Hot sip", 45 C / 113 F.
+    private static let firstRunMode = Mode.hold(45)
 
     override init() {
         let d = UserDefaults.standard
         func load<T: Decodable>(_ key: String) -> T? {
             d.data(forKey: key).flatMap { try? JSONDecoder().decode(T.self, from: $0) }
         }
-        mode = load("mode") ?? .hold(MugLimits.floor)
-        presets = load("presets") ?? Preset.defaults
+        mode = load("mode") ?? Self.firstRunMode
+        var saved: [Preset] = load("presets") ?? Preset.defaults
+        // "Mug floor" (45 C) was renamed once it turned out the mug never holds that low by itself.
+        for i in saved.indices where saved[i].name == "Mug floor" && saved[i].mode == .hold(45) { saved[i].name = "Hot sip" }
+        presets = saved
         activePresetID = load("activePresetID")
         unit = load("unit") ?? .fahrenheit
         controller = load("controller") ?? HeaterController()
+        homeLight = load("homeLight")
+        blinkWhileCycling = load("blinkWhileCycling") ?? true
         super.init()
         loading = false
         central = CBCentralManager(delegate: self, queue: .main)
@@ -90,13 +106,30 @@ final class MugManager: NSObject, ObservableObject {
         put(activePresetID, "activePresetID")
         put(unit, "unit")
         put(controller, "controller")
+        put(homeLight, "homeLight")
+        put(blinkWhileCycling, "blinkWhileCycling")
     }
+
+    var activePreset: Preset? {
+        presets.first { $0.id == activePresetID && $0.mode == mode }
+    }
+
+    var phase: HeaterPhase {
+        HeaterPhase(connected: link == .connected, state: state, temp: temp, goal: goal, pulsing: pulsing)
+    }
+
+    /// Whether the menu-bar icon should be breathing right now.
+    private var iconAnimates: Bool { phase == .heating || phase == .coolingToGoal }
+
+    private func updateIconAnimation() { iconClock.running = iconAnimates }
 
     private func modeChanged() {
         guard !loading else { return }
         controller.resetForNewMode(now: Date())
         save()
         runController()
+        updateLight()
+        updateIconAnimation()
     }
 
     func apply(_ preset: Preset) {
@@ -126,6 +159,7 @@ final class MugManager: NSObject, ObservableObject {
         if let p = peripheral { central.cancelPeripheralConnection(p) }
         peripheral = nil
         chars = [:]
+        dropReadings()
         startScan()
     }
 
@@ -155,6 +189,15 @@ final class MugManager: NSObject, ObservableObject {
         }
     }
 
+    /// The link is gone: forget readings from before the gap so the first controller run after it waits for fresh
+    /// ones, and let the controller re-check whether the cup was replaced meanwhile.
+    private func dropReadings() {
+        lastLight = nil
+        temp = nil
+        state = .unknown
+        controller.lostContact()
+    }
+
     private func startPolling() {
         pollTimer?.invalidate()
         pollTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in
@@ -175,6 +218,8 @@ final class MugManager: NSObject, ObservableObject {
             }
         }
         runController()
+        updateLight()
+        updateIconAnimation()
         if let t = temp, tick % 20 == 0 {
             log(String(format: "sample coffee %.2f state %@ mug-target %.2f goal %@ pulsing %@ overshoot %.2f", t, state.label,
                        mugTarget ?? -1, goal.map { String(format: "%.2f", $0) } ?? "none", pulsing ? "yes" : "no", controller.overshoot))
@@ -192,7 +237,10 @@ final class MugManager: NSObject, ObservableObject {
         guard link == .connected else { return }
         let learned = controller.overshoot
         let out = controller.update(now: Date(), temp: temp, state: state, mode: mode)
-        if controller.overshoot != learned { save() }
+        // Save what learned, and the pour time, so a relaunch mid-cup picks the glide up where it was.
+        // Also once a minute, so a relaunch knows how long Ember Bar was away from the mug (`lastSeen`).
+        if controller.overshoot != learned || out.events.contains(.filled) || out.events.contains(.emptied)
+            || tick % 20 == 0 { save() }
         goal = out.goal
         pulsing = out.pulsing
         for e in out.events { handle(e) }
@@ -217,7 +265,7 @@ final class MugManager: NSObject, ObservableObject {
         }
     }
 
-    /// The firmware sometimes refuses a low target written straight from the 48.88 C floor, but keeps it
+    /// The firmware sometimes refuses a low target written straight from its 48.88 C default, but keeps it
     /// when stepped through an in-range value (measured 2026-11-05).
     private func verifyTarget(_ read: Double) {
         guard let v = verifying else { return }
@@ -229,16 +277,42 @@ final class MugManager: NSObject, ObservableObject {
         }
     }
 
-    func setLED(_ rgb: EmberCodec.RGB) {
-        guard let p = peripheral, let c = chars[EmberUUID.ledColor] else { return }
-        p.writeValue(EmberCodec.encodeLED(rgb), for: c, type: .withResponse)
-        led = rgb
+    /// Sets the mug's everyday light color (the Mug page's color picker).
+    func setHomeLight(_ rgb: EmberCodec.RGB) {
+        homeLight = rgb
+        updateLight()
     }
 
-    /// Called on quit: never leave the mug parked at the 45 C floor when the app was pulsing below it.
+    /// The light the mug should show when not on the dim half of a blink. Never `led`, which may hold the dim half.
+    private var lightBase: EmberCodec.RGB? { activePreset?.light ?? homeLight }
+
+    /// Puts the active preset's color (or the everyday one) on the mug. Re-run every poll (3 s). The blink half is read off the clock and lasts 6 s, twice the poll, so neither
+    /// timer jitter nor the extra polls push events trigger can skip a half. It blinks only while the current
+    /// goal is one Ember Bar pulses, not during a glide step the mug holds by itself.
+    private func updateLight() {
+        guard link == .connected, let base = lightBase else { return }
+        let blinking = blinkWhileCycling && state.hasLiquid && goal.map(MugLimits.needsPulsing) == true
+        let want = MugLight.color(base: base, blinking: blinking, tick: Int(Date().timeIntervalSince1970 / 6))
+        guard want != lastLight else { return }
+        writeLED(want)
+    }
+
+    private func writeLED(_ rgb: EmberCodec.RGB) {
+        guard let p = peripheral, let c = chars[EmberUUID.ledColor] else { return }
+        p.writeValue(EmberCodec.encodeLED(rgb), for: c, type: .withResponse)
+        lastLight = rgb
+    }
+
+    /// Called on quit: never leave the heater on when the app was pulsing below what the mug holds by itself,
+    /// and never leave the light parked on its dim blink.
     func prepareForQuit() {
-        guard case let g? = goal, g < MugLimits.floor, let p = peripheral, let c = chars[EmberUUID.targetTemp] else { return }
-        p.writeValue(EmberCodec.encodeTemp(MugLimits.off), for: c, type: .withResponse)
+        guard let p = peripheral else { return }
+        if let base = lightBase, lastLight != base, let c = chars[EmberUUID.ledColor] {
+            p.writeValue(EmberCodec.encodeLED(base), for: c, type: .withResponse)
+        }
+        if case let g? = goal, MugLimits.needsPulsing(g), let c = chars[EmberUUID.targetTemp] {
+            p.writeValue(EmberCodec.encodeTemp(MugLimits.off), for: c, type: .withResponse)
+        }
         RunLoop.main.run(until: Date().addingTimeInterval(0.5))
     }
 
@@ -262,7 +336,7 @@ final class MugManager: NSObject, ObservableObject {
         log("event: \(e)")
         switch e {
         case .ready(let target):
-            notify("Coffee is ready", "It's down to \(unit.format(target)) \(unit.rawValue).")
+            notify("Coffee is ready", "It's at \(unit.format(target))\(unit.rawValue).")
         case .filled, .emptied:
             break
         }
@@ -289,7 +363,11 @@ final class MugManager: NSObject, ObservableObject {
 extension MugManager: CBCentralManagerDelegate {
     nonisolated func centralManagerDidUpdateState(_ central: CBCentralManager) {
         MainActor.assumeIsolated {
-            if central.state == .poweredOn { startScan() } else { link = .bluetoothOff }
+            if central.state == .poweredOn { startScan() } else {
+                pollTimer?.invalidate()
+                link = .bluetoothOff
+                dropReadings()
+            }
         }
     }
 
@@ -322,6 +400,7 @@ extension MugManager: CBCentralManagerDelegate {
     private func reconnectSoon() {
         pollTimer?.invalidate()
         chars = [:]
+        dropReadings()
         link = .scanning
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
             MainActor.assumeIsolated {
@@ -368,9 +447,31 @@ extension MugManager: CBPeripheralDelegate {
             case EmberUUID.battery: battery = EmberCodec.decodeBattery(data); checkBattery()
             case EmberUUID.liquidLevel: level = data.first.map(Int.init)
             case EmberUUID.firmware: firmware = EmberCodec.decodeFirmware(data)
-            case EmberUUID.ledColor: led = EmberCodec.decodeLED(data)
+            case EmberUUID.ledColor:
+                led = EmberCodec.decodeLED(data)
+                if homeLight == nil, let l = led { homeLight = l }  // first connect: adopt the mug's own color
             case EmberUUID.pushEvents: poll()
             default: break
+            }
+        }
+    }
+}
+
+/// Ticks about 6 times a second while the menu-bar icon breathes, and not at all otherwise.
+@MainActor
+final class IconClock: ObservableObject {
+    @Published private(set) var frame = 0
+    private var timer: Timer?
+
+    var running = false {
+        didSet {
+            guard running != oldValue else { return }
+            timer?.invalidate()
+            timer = nil
+            if running {
+                timer = Timer.scheduledTimer(withTimeInterval: 1.0 / 6, repeats: true) { [weak self] _ in
+                    MainActor.assumeIsolated { self?.frame &+= 1 }
+                }
             }
         }
     }
