@@ -1,10 +1,15 @@
 # Ember Bar
 
-A menu-bar app for Chester's Ember mug (Ember Cup 2), replacing Ember's own app.
+A menu-bar app for Ember mugs (built on Chester's Ember Cup 2), replacing Ember's own app.
 
 - **Menu bar:** coffee temperature with the goal under it, on a cup tinted by what the heater is doing (orange
   heating or holding, blue cooling down to the goal, purple resting between pulses, teal heater off; it breathes
-  while heating or cooling). Click for presets, a hold slider and a 20-minute chart.
+  while heating or cooling). Click for programs, a hold slider and a 20-minute chart.
+- **Programs:** "+ New program" in the popover (a hold or a glide; the editor also offers heater off); right-click a program to rename, edit
+  or delete it; "Save as program" keeps the slider's hold. The slider is color-coded: blue cool, amber at 120 °F
+  (the mark: the mug holds that and above by itself), red hot.
+- **Choosing a mug:** with no mug yet, the popover lists "Mugs nearby" with Connect. Mug page > Forget this mug picks
+  another. Rename the mug from the pencil in the popover or the Mug page (stored on the mug; up to 14 characters).
 - **On / Off / Pause** (popover and window): Turn off turns the heater off, Turn on goes back to the last program (a glide
   carries on where its clock says), Pause turns it off for 15 min, 30 min or an hour and then comes back by itself.
   While paused, Stay off ends the pause and keeps the heater off, and Resume goes back now.
@@ -24,6 +29,12 @@ A menu-bar app for Chester's Ember mug (Ember Cup 2), replacing Ember's own app.
   only if it was out of touch for 15+ minutes and the coffee came back at least 3 °C hotter, i.e. a refill.
 
 Install or update: `./install.sh` (builds, installs to /Applications, relaunches).
+Share a copy: `./package.sh` builds `dist/Ember-Bar-<VERSION>.zip` (Apple silicon and
+Intel, macOS 14+, with `READ ME FIRST.txt` for the recipient); `package.sh --release` also uploads it as a release on
+the private GitHub repo. It is signed ad hoc, not notarized, so the recipient clicks "Open Anyway" once per version (and macOS may ask
+for Bluetooth permission again after an update, since each ad-hoc build counts as a new app).
+Check the layout without clicking the menu bar: `EMBERBAR_SNAPSHOT=/tmp/snap "build/Ember Bar.app/Contents/MacOS/EmberBar"`
+writes PNGs of the popover and window pages (it never touches the mug).
 Tests: `./test.sh` (plain `swift test` can't find swift-testing's macro plugin with only
 Command Line Tools installed; see ~/.claude/papercuts.md).
 Log: `~/Library/Logs/EmberBar.log`. One-off CLI: `./set-temp.sh 50`.

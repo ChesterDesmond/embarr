@@ -440,7 +440,8 @@ struct CompactView: View {
 
             nameBox
             if let err = mug.mugProblem { Text(err).font(.caption).foregroundStyle(.red) }
-            if !mug.hasPairedMug { NearbyMugsList() }
+            if mug.link.bluetoothUnavailable { BluetoothHint() }
+            else if !mug.hasPairedMug { NearbyMugsList() }
             else if mug.mugMissing {
                 Text("Not finding your mug? Wake it, and quit Ember's app on your phone. Still nothing: open the window, Mug, Forget this mug, and connect it again.")
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
@@ -862,4 +863,26 @@ final class PendingCommit {
         DispatchQueue.main.asyncAfter(deadline: .now() + seconds, execute: next)
     }
     func cancel() { item?.cancel(); item = nil }
+}
+
+/// What to do when Bluetooth can't be used: turn it on, or allow Ember Bar in System Settings.
+struct BluetoothHint: View {
+    @EnvironmentObject var mug: MugManager
+
+    var body: some View {
+        if mug.link == .bluetoothDenied {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Ember Bar needs Bluetooth to reach the mug. Turn it on for Ember Bar in System Settings > Privacy & Security > Bluetooth.")
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                Button("Open Bluetooth settings") {
+                    if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Bluetooth") {
+                        NSWorkspace.shared.open(url)
+                    }
+                }
+            }
+        } else {
+            Text("Turn Bluetooth on (Control Center, at the top right of the screen).")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+    }
 }

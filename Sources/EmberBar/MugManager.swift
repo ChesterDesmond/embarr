@@ -17,11 +17,26 @@ struct Sample: Identifiable {
 @MainActor
 final class MugManager: NSObject, ObservableObject {
     enum Link: Equatable {
-        case bluetoothOff, scanning, connecting, waitingForMug, connected
+        case bluetoothOff, bluetoothDenied, scanning, connecting, waitingForMug, connected
+
+        /// Bluetooth isn't powered on. Denied permission is told apart from switched off because its fix is in System
+        /// Settings, not Control Center. Anything else (still starting up, resetting, or the permission prompt still
+        /// open) is not something to fix yet, so it reads as still looking.
+        init(unavailable state: CBManagerState) {
+            switch state {
+            case .unauthorized: self = .bluetoothDenied
+            case .poweredOff: self = .bluetoothOff
+            default: self = .scanning
+            }
+        }
+
+        /// Bluetooth itself is unusable, so there is no mug to look for.
+        var bluetoothUnavailable: Bool { self == .bluetoothOff || self == .bluetoothDenied }
 
         var label: String {
             switch self {
             case .bluetoothOff: "Bluetooth is off"
+            case .bluetoothDenied: "Bluetooth not allowed"
             case .scanning: "Looking for the mug…"
             case .connecting: "Connecting…"
             case .waitingForMug: "Mug busy: quit the Ember app"
@@ -36,9 +51,9 @@ final class MugManager: NSObject, ObservableObject {
             guard link != oldValue else { return }
             log("link: \(link.label)")
             updateIconAnimation()
-            // The "not finding your mug" minute counts only time spent looking: Bluetooth off pauses it, and it
-            // starts over when Bluetooth comes back.
-            if link == .connected || link == .bluetoothOff { linkDownSince = nil; mugMissing = false }
+            // The "not finding your mug" minute counts only time spent looking: while Bluetooth is off or not
+            // allowed it is cleared, and it starts over once Bluetooth is usable again.
+            if link == .connected || link.bluetoothUnavailable { linkDownSince = nil; mugMissing = false }
             else if linkDownSince == nil { linkDownSince = Date() }
         }
     }
@@ -143,7 +158,7 @@ final class MugManager: NSObject, ObservableObject {
                 guard let self else { return }
                 self.resumeIfPauseOver()
                 self.publishNearby()  // drops mugs that went quiet
-                let missing = self.hasPairedMug && self.link != .bluetoothOff && (self.linkDownSince.map { Date().timeIntervalSince($0) > 60 } ?? false)
+                let missing = self.hasPairedMug && !self.link.bluetoothUnavailable && (self.linkDownSince.map { Date().timeIntervalSince($0) > 60 } ?? false)
                 if missing != self.mugMissing { self.mugMissing = missing }
             }
         }
@@ -391,7 +406,7 @@ final class MugManager: NSObject, ObservableObject {
     }
 
     private func startScan() {
-        guard central.state == .poweredOn else { link = .bluetoothOff; return }
+        guard central.state == .poweredOn else { link = Link(unavailable: central.state); return }
         if let idString = defaults.string(forKey: Self.pairedKey), let id = UUID(uuidString: idString),
            let known = central.retrievePeripherals(withIdentifiers: [id]).first {
             connect(known)
@@ -600,7 +615,7 @@ extension MugManager: CBCentralManagerDelegate {
         MainActor.assumeIsolated {
             if central.state == .poweredOn { startScan() } else {
                 pollTimer?.invalidate()
-                link = .bluetoothOff
+                link = Link(unavailable: central.state)
                 dropReadings()
             }
         }
@@ -648,7 +663,8 @@ extension MugManager: CBCentralManagerDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
             MainActor.assumeIsolated {
                 // Something else (Connect on another mug, Forget) may have moved on during the wait.
-                guard let self, self.link == .scanning else { return }
+                // Bluetooth may also be resetting (shown as still looking): connecting then is an API misuse.
+                guard let self, self.link == .scanning, self.central.state == .poweredOn else { return }
                 if let p = self.peripheral { self.connect(p) } else { self.startScan() }
             }
         }
