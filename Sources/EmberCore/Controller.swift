@@ -177,14 +177,15 @@ public struct HeaterController: Codable, Equatable, Sendable {
         try c.encodeIfPresent(lastTemp, forKey: .lastTemp)
     }
 
-    /// Forget the current fill's progress (used when the mode changes).
-    public mutating func resetForNewMode(now: Date) {
+    /// Forget the current fill's progress (used when the mode changes). `keepCupClock` is for coming back from Off
+    /// or a pause: a glide carries on where the clock says (the coffee cooled meanwhile) instead of starting over.
+    public mutating func resetForNewMode(now: Date, keepCupClock: Bool = false) {
         pulsing = false
         announcedReady = false
         sawAboveGoal = false
         lastOnAt = nil
         cutoffAt = nil
-        if hadLiquid { fillStart = now }
+        if hadLiquid && !keepCupClock { fillStart = now }
     }
 
     public func goal(for mode: Mode, now: Date) -> Double? {

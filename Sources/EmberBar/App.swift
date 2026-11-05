@@ -109,6 +109,7 @@ enum StatusIcon {
 extension MugManager {
     var statusLine: String {
         guard link == .connected else { return link.label }
+        if let paused = pausedText { return paused }
         switch phase {
         case .unavailable: return "Empty"
         case .heating: return pulsing ? "Warming gently" : "Heating"
@@ -172,6 +173,42 @@ struct TempSlider: View {
     }
 }
 
+/// On / Off and Pause, in the popover and the window.
+struct PowerRow: View {
+    @EnvironmentObject var mug: MugManager
+
+    var body: some View {
+        HStack(spacing: 8) {
+            if let paused = mug.pausedText {
+                Button { mug.stayOff() } label: { Label("Stay off", systemImage: "power") }
+                    .buttonStyle(.bordered)
+                    .help("Paused. Click to end the pause and keep the heater off.")
+                Button("Resume") { mug.turnOn() }.buttonStyle(.bordered).help(paused)
+                if mug.link != .connected {  // otherwise the status line above already says until when
+                    Text(paused).font(.caption).foregroundStyle(.secondary)
+                }
+            } else {
+                Button { mug.isOn ? mug.turnOff() : mug.turnOn() } label: {
+                    Label(mug.isOn ? "Turn off" : "Turn on", systemImage: "power")
+                }
+                .buttonStyle(.bordered)
+                .tint(mug.isOn ? .orange : nil)
+                .help(mug.isOn ? "Heater on. Click to turn it off." : "Heater off. Click to go back to your last program.")
+                Menu {
+                    Button("15 minutes") { mug.pause(minutes: 15) }
+                    Button("30 minutes") { mug.pause(minutes: 30) }
+                    Button("1 hour") { mug.pause(minutes: 60) }
+                } label: { Label("Pause", systemImage: "pause.fill") }
+                .menuStyle(.borderedButton)
+                .fixedSize()
+                .disabled(!mug.isOn)
+                .help("Heater off for a while, then back to this program by itself.")
+            }
+            Spacer()
+        }
+    }
+}
+
 struct Sparkline: View {
     let samples: [Sample]
     let unit: TempUnit
@@ -223,6 +260,8 @@ struct CompactView: View {
                     if let g = mug.goal { Text("Goal \(mug.unit.dual(g))").font(.caption).foregroundStyle(.secondary) }
                 }
             }
+
+            PowerRow()
 
             let recent = mug.history.filter { $0.time > Date().addingTimeInterval(-20 * 60) }
             if recent.count > 2 {
@@ -317,6 +356,7 @@ struct NowPage: View {
                         }
                     }
                 }
+                PowerRow()
                 Picker("Show", selection: _window.projectedValue) {
                     Text("15 min").tag(15.0); Text("1 hour").tag(60.0); Text("4 hours").tag(240.0)
                 }.pickerStyle(.segmented).frame(width: 280)

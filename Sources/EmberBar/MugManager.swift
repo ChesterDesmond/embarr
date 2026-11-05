@@ -54,6 +54,8 @@ final class MugManager: NSObject, ObservableObject {
     @Published var homeLight: EmberCodec.RGB? { didSet { save() } }
     /// Slowly blink the mug's light while Ember Bar is cycling the heater (pulsed holds and glides).
     @Published var blinkWhileCycling: Bool { didSet { save() } }
+    /// What the power button and Pause go back to, and when a pause ends.
+    @Published private(set) var power: PowerMemory { didSet { save() } }
     /// Drives the menu-bar icon's breathing. Kept off MugManager's own @Published values so only the icon redraws.
     let iconClock = IconClock()
 
@@ -68,6 +70,10 @@ final class MugManager: NSObject, ObservableObject {
     private var warnedBattery = false
     private var lastLight: EmberCodec.RGB?
     private var loading = true
+    /// Set while the power row (Off, On, Pause, a pause running out) changes the mode, as opposed to the user
+    /// choosing a program: the glide clock keeps running and the remembered program stays.
+    private var powerChange = false
+    private var powerTimer: Timer?
 
     private let defaults = UserDefaults.standard
     /// What a fresh install starts on: "Hot sip", 45 C / 113 F.
@@ -78,18 +84,26 @@ final class MugManager: NSObject, ObservableObject {
         func load<T: Decodable>(_ key: String) -> T? {
             d.data(forKey: key).flatMap { try? JSONDecoder().decode(T.self, from: $0) }
         }
-        mode = load("mode") ?? Self.firstRunMode
+        let savedMode: Mode = load("mode") ?? Self.firstRunMode
+        mode = savedMode
         var saved: [Preset] = load("presets") ?? Preset.defaults
         // "Mug floor" (45 C) was renamed once it turned out the mug never holds that low by itself.
         for i in saved.indices where saved[i].name == "Mug floor" && saved[i].mode == .hold(45) { saved[i].name = "Hot sip" }
         presets = saved
-        activePresetID = load("activePresetID")
+        let savedPresetID: UUID? = load("activePresetID")
+        activePresetID = savedPresetID
         unit = load("unit") ?? .fahrenheit
         controller = load("controller") ?? HeaterController()
         homeLight = load("homeLight")
         blinkWhileCycling = load("blinkWhileCycling") ?? true
+        var memory: PowerMemory = load("power") ?? PowerMemory()
+        if memory.resumeMode == nil, savedMode != .off { memory.chose(savedMode, presetID: savedPresetID) }
+        power = memory
         super.init()
         loading = false
+        powerTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.resumeIfPauseOver() }
+        }
         central = CBCentralManager(delegate: self, queue: .main)
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
     }
@@ -108,6 +122,7 @@ final class MugManager: NSObject, ObservableObject {
         put(controller, "controller")
         put(homeLight, "homeLight")
         put(blinkWhileCycling, "blinkWhileCycling")
+        put(power, "power")
     }
 
     var activePreset: Preset? {
@@ -125,7 +140,10 @@ final class MugManager: NSObject, ObservableObject {
 
     private func modeChanged() {
         guard !loading else { return }
-        controller.resetForNewMode(now: Date())
+        // Turning the heater off (Off, Pause, "Just let it cool") never moves the pour time, so On picks a glide up
+        // where the clock says.
+        controller.resetForNewMode(now: Date(), keepCupClock: powerChange || mode == .off)
+        if !powerChange { power.chose(mode, presetID: activePresetID) }
         save()
         runController()
         updateLight()
@@ -135,6 +153,68 @@ final class MugManager: NSObject, ObservableObject {
     func apply(_ preset: Preset) {
         activePresetID = preset.id
         mode = preset.mode
+    }
+
+    // MARK: Power: on, off, pause
+
+    var isOn: Bool { mode != .off }
+
+    /// When the current pause ends, or nil when not paused.
+    var pausedUntil: Date? { power.isPaused(now: Date()) ? power.pausedUntil : nil }
+
+    /// "Paused until 3:45 PM", or nil when not paused.
+    var pausedText: String? { pausedUntil.map { "Paused until \($0.formatted(date: .omitted, time: .shortened))" } }
+
+    func turnOff() {
+        guard isOn else { return }
+        switchOffRemembering()
+        log("power: off")
+    }
+
+    func turnOn() {
+        let back = power.turnOn()
+        setByPower(back.mode, presetID: back.presetID)
+        log("power: on, \(modeDescription(mode))")
+    }
+
+    /// Heater off for `minutes`, then back to the current program by itself.
+    func pause(minutes: Double) {
+        guard isOn else { return }
+        switchOffRemembering(pauseUntil: Date().addingTimeInterval(minutes * 60))
+        log("power: paused \(Int(minutes)) min")
+    }
+
+    /// The power button during a pause: end the pause and keep the heater off. On still knows the program.
+    func stayOff() {
+        power.endPause()
+        log("power: pause ended early, staying off")
+    }
+
+    private func resumeIfPauseOver() {
+        // Checked first so the usual case (not paused) doesn't touch `power`, whose didSet would save and redraw.
+        guard power.pausedUntil != nil, !power.isPaused(now: Date()) else { return }
+        guard let back = power.dueResume(now: Date()) else {
+            log("power: pause ended long ago, staying off")
+            notify("Heater still off", "Your pause ended while Ember Bar was away from the mug. Click Turn on to go back to your program.")
+            return
+        }
+        setByPower(back.mode, presetID: back.presetID)
+        log("power: pause over, back to \(modeDescription(mode))")
+    }
+
+    /// Off or Pause: remember what was running so On (or the end of the pause) goes back to it.
+    private func switchOffRemembering(pauseUntil: Date? = nil) {
+        power.chose(mode, presetID: activePresetID)
+        if let until = pauseUntil { power.pause(until: until) }
+        setByPower(.off, presetID: nil)
+    }
+
+    private func setByPower(_ mode: Mode, presetID: UUID?) {
+        let (mode, presetID) = mode == .off ? (mode, presetID) : PowerMemory.current((mode, presetID), in: presets)
+        powerChange = true
+        defer { powerChange = false }
+        activePresetID = presetID
+        self.mode = mode
     }
 
     func setHold(celsius: Double) {

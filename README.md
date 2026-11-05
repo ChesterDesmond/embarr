@@ -5,6 +5,11 @@ A menu-bar app for Chester's Ember mug (Ember Cup 2), replacing Ember's own app.
 - **Menu bar:** coffee temperature with the goal under it, on a cup tinted by what the heater is doing (orange
   heating or holding, blue cooling down to the goal, purple resting between pulses, teal heater off; it breathes
   while heating or cooling). Click for presets, a hold slider and a 20-minute chart.
+- **On / Off / Pause** (popover and window): Turn off turns the heater off, Turn on goes back to the last program (a glide
+  carries on where its clock says), Pause turns it off for 15 min, 30 min or an hour and then comes back by itself.
+  While paused, Stay off ends the pause and keeps the heater off, and Resume goes back now.
+  A pause that ended more than 30 min before Ember Bar could act on it (app quit or Mac asleep) stays off, with a
+  notification saying so.
 - **Window** (the window icon in the popover): full chart, preset and glide editor, LED color, units, heater tuning.
 - **Below 48.9 °C / 120 °F** the mug won't hold a temperature by itself, so the app pulses the heater (target 0 = off,
   45 = on) and learns how far the coffee keeps warming after each burst. This only runs while the Mac is connected.
