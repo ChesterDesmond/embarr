@@ -45,6 +45,12 @@ public struct Preset: Codable, Equatable, Hashable, Identifiable, Sendable {
         self.id = id; self.name = name; self.mode = mode; self.light = light
     }
 
+    /// A program name as typed, trimmed; nil when nothing is left.
+    public static func cleanName(_ name: String) -> String? {
+        let t = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return t.isEmpty ? nil : t
+    }
+
     public static let defaults: [Preset] = [
         Preset(name: "Body temp", mode: .hold(37)),
         Preset(name: "Warm sip", mode: .hold(41)),

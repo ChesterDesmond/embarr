@@ -4,6 +4,8 @@ import Foundation
 import SwiftUI
 import UserNotifications
 
+enum WindowPage: Hashable { case now, programs, mug }
+
 struct Sample: Identifiable {
     let id = UUID()
     let time: Date
@@ -30,7 +32,15 @@ final class MugManager: NSObject, ObservableObject {
 
     // Live readings
     @Published var link: Link = .scanning {
-        didSet { if link != oldValue { log("link: \(link.label)"); updateIconAnimation() } }
+        didSet {
+            guard link != oldValue else { return }
+            log("link: \(link.label)")
+            updateIconAnimation()
+            // The "not finding your mug" minute counts only time spent looking: Bluetooth off pauses it, and it
+            // starts over when Bluetooth comes back.
+            if link == .connected || link == .bluetoothOff { linkDownSince = nil; mugMissing = false }
+            else if linkDownSince == nil { linkDownSince = Date() }
+        }
     }
     @Published var name = "Ember mug"
     @Published var temp: Double?
@@ -56,6 +66,9 @@ final class MugManager: NSObject, ObservableObject {
     @Published var blinkWhileCycling: Bool { didSet { save() } }
     /// What the power button and Pause go back to, and when a pause ends.
     @Published private(set) var power: PowerMemory { didSet { save() } }
+    /// Which page the main window shows, and a program the window should open in its editor (set from the popover).
+    @Published var windowPage: WindowPage = .now
+    @Published var editRequest: Preset?
     /// Drives the menu-bar icon's breathing. Kept off MugManager's own @Published values so only the icon redraws.
     let iconClock = IconClock()
 
@@ -79,7 +92,29 @@ final class MugManager: NSObject, ObservableObject {
     /// What a fresh install starts on: "Hot sip", 45 C / 113 F.
     private static let firstRunMode = Mode.hold(45)
 
-    override init() {
+    /// Mugs heard while choosing one ("Mugs nearby"), in the order they showed up. Empty once a mug is paired.
+    @Published private(set) var nearby: [NearbyMugs.Mug] = []
+    /// Whether this Mac has a mug of its own. Without one, the app lists nearby mugs and waits for Connect, so a
+    /// household with two mugs never grabs the wrong one.
+    @Published private(set) var hasPairedMug: Bool
+    /// Set when the mug refused a setting or a new name (a mug reset since it was last set up in Ember's app refuses
+    /// writes). Cleared on the next connect.
+    @Published var mugProblem: String?
+    /// True once this Mac's mug has been out of reach for a minute (asleep mugs drop the link briefly; this is longer),
+    /// so the popover can suggest what to try.
+    @Published private(set) var mugMissing = false
+    private var linkDownSince: Date? = Date()
+    /// Writes refused in a row. One can be a Bluetooth hiccup; several mean the mug won't take settings.
+    private var refusedWrites = 0
+    private var nearbyMugs = NearbyMugs()
+    private var discovered: [UUID: CBPeripheral] = [:]
+
+    /// UserDefaults key holding this Mac's mug (its CoreBluetooth identifier).
+    private static let pairedKey = "peripheral"
+    private var pairedID: UUID? { defaults.string(forKey: Self.pairedKey).flatMap(UUID.init(uuidString:)) }
+
+    /// `live: false` makes a copy that never touches Bluetooth, timers or notifications (the snapshot tool).
+    init(live: Bool = true) {
         let d = UserDefaults.standard
         func load<T: Decodable>(_ key: String) -> T? {
             d.data(forKey: key).flatMap { try? JSONDecoder().decode(T.self, from: $0) }
@@ -99,10 +134,18 @@ final class MugManager: NSObject, ObservableObject {
         var memory: PowerMemory = load("power") ?? PowerMemory()
         if memory.resumeMode == nil, savedMode != .off { memory.chose(savedMode, presetID: savedPresetID) }
         power = memory
+        hasPairedMug = d.string(forKey: Self.pairedKey) != nil
         super.init()
         loading = false
+        guard live else { return }
         powerTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.resumeIfPauseOver() }
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.resumeIfPauseOver()
+                self.publishNearby()  // drops mugs that went quiet
+                let missing = self.hasPairedMug && self.link != .bluetoothOff && (self.linkDownSince.map { Date().timeIntervalSince($0) > 60 } ?? false)
+                if missing != self.mugMissing { self.mugMissing = missing }
+            }
         }
         central = CBCentralManager(delegate: self, queue: .main)
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
@@ -184,7 +227,7 @@ final class MugManager: NSObject, ObservableObject {
         log("power: paused \(Int(minutes)) min")
     }
 
-    /// The power button during a pause: end the pause and keep the heater off. On still knows the program.
+    /// The power button during a pause: end the pause and keep the heater off. Turn on still knows the program.
     func stayOff() {
         power.endPause()
         log("power: pause ended early, staying off")
@@ -222,14 +265,118 @@ final class MugManager: NSObject, ObservableObject {
         mode = .hold((celsius * 10).rounded() / 10)
     }
 
-    func saveCurrentAsPreset(named name: String) {
-        let p = Preset(name: name, mode: mode)
+    // MARK: Programs (presets) from the popover
+
+    /// Saves `mode` as a new program. When it is what's running now, it becomes the active program too, so the tile
+    /// lights up and Turn on comes back to it, without restarting anything.
+    func addProgram(name: String, mode newMode: Mode) {
+        let p = Preset(name: Preset.cleanName(name) ?? "My program", mode: newMode)
         presets.append(p)
-        activePresetID = p.id
+        if newMode == mode {
+            activePresetID = p.id
+            power.chose(mode, presetID: p.id)
+        }
+    }
+
+    func renameProgram(_ id: UUID, to name: String) {
+        guard let clean = Preset.cleanName(name), let i = presets.firstIndex(where: { $0.id == id }) else { return }
+        presets[i].name = clean
+    }
+
+    /// Removes a program. If it was the one running, the mug keeps running its settings, no longer tied to a tile,
+    /// and goes back to the everyday light color.
+    func deleteProgram(_ id: UUID) {
+        presets.removeAll { $0.id == id }
+        if activePresetID == id { activePresetID = nil }
+        updateLight()
+    }
+
+    /// Asks the main window to show a page, and optionally open the program editor on `preset` (a new one or an
+    /// existing one). The popover can't host the editor itself: a sheet on a menu-bar panel closes with the panel.
+    func openInWindow(page: WindowPage, editing preset: Preset? = nil) {
+        windowPage = page
+        editRequest = preset
+    }
+
+    // MARK: Mug name
+
+    /// Renames the mug itself (stored on the mug, so Ember's own app sees it too). Returns why it can't, or nil once
+    /// the name is sent; a refusal from the mug arrives later in `mugProblem`.
+    func renameMug(_ newName: String) -> String? {
+        guard let data = EmberCodec.encodeName(newName) else { return EmberCodec.nameHint }
+        guard link == .connected, let p = peripheral, let c = chars[EmberUUID.mugName] else { return "Connect to the mug first." }
+        mugProblem = nil
+        p.writeValue(data, for: c, type: .withResponse)
+        log("rename mug: \(newName)")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, let c = self.chars[EmberUUID.mugName] else { return }
+                self.peripheral?.readValue(for: c)
+            }
+        }
+        return nil
+    }
+
+    // MARK: Choosing a mug
+
+    /// Connects to a mug from "Mugs nearby" and makes it this Mac's mug.
+    func pair(_ id: UUID) {
+        guard let p = discovered[id] else { return }
+        defaults.set(id.uuidString, forKey: Self.pairedKey)
+        hasPairedMug = true
+        nearbyMugs.clear()
+        nearby = []
+        discovered = [:]
+        linkDownSince = Date()  // the minute before "not finding your mug" starts now, not at launch
+        log("pair: \(p.name ?? id.uuidString)")
+        connect(p)
+    }
+
+    /// Lets go of this mug (heater off if Ember Bar was pulsing it, light back to steady) and goes back to listing
+    /// mugs nearby. What belonged to that mug goes too: its light color and the learned overshoot.
+    func forgetMug() {
+        releaseMug()
+        defaults.removeObject(forKey: Self.pairedKey)
+        hasPairedMug = false
+        let old = peripheral
+        peripheral = nil  // from here on, callbacks from the old mug are ignored (see `isCurrent`)
+        chars = [:]
+        pollTimer?.invalidate()
+        waitTimer?.invalidate()  // a pending "mug busy" from the old connect attempt no longer applies
+        dropReadings()
+        battery = nil; level = nil; firmware = nil; led = nil; mugTarget = nil; goal = nil; pulsing = false
+        homeLight = nil
+        resetLearning()
+        mugProblem = nil
+        refusedWrites = 0
+        name = "Ember mug"
+        log("forget mug")
+        // Give the heater-off write time to reach the mug before letting go of the link.
+        if let old {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+                MainActor.assumeIsolated {
+                    // Connect on this same mug in the meantime made it current again: keep that link.
+                    guard let self, self.peripheral !== old else { return }
+                    self.central.cancelPeripheralConnection(old)
+                }
+            }
+        }
+        startScan()
+    }
+
+    /// Bluetooth callbacks can arrive from a mug that was just forgotten; only the current one counts.
+    private func isCurrent(_ p: CBPeripheral) -> Bool { p === peripheral }
+
+    private func publishNearby() {
+        guard !hasPairedMug else { return }
+        // Only redraw when a row appears, goes or is renamed: signal strength alone isn't shown.
+        let list = nearbyMugs.list(now: Date())
+        guard list.map(\.id) != nearby.map(\.id) || list.map(\.name) != nearby.map(\.name) else { return }
+        nearby = list
     }
 
     func resetLearning() {
-        controller.overshoot = 1.0
+        controller.overshoot = HeaterController().overshoot
         save()
     }
 
@@ -245,13 +392,14 @@ final class MugManager: NSObject, ObservableObject {
 
     private func startScan() {
         guard central.state == .poweredOn else { link = .bluetoothOff; return }
-        if let idString = defaults.string(forKey: "peripheral"), let id = UUID(uuidString: idString),
+        if let idString = defaults.string(forKey: Self.pairedKey), let id = UUID(uuidString: idString),
            let known = central.retrievePeripherals(withIdentifiers: [id]).first {
             connect(known)
             return
         }
         link = .scanning
-        central.scanForPeripherals(withServices: nil)
+        // Duplicates on: signal strength keeps updating, and mugs that go quiet drop off the list.
+        central.scanForPeripherals(withServices: nil, options: [CBCentralManagerScanOptionAllowDuplicatesKey: !hasPairedMug])
     }
 
     private func connect(_ p: CBPeripheral) {
@@ -386,6 +534,14 @@ final class MugManager: NSObject, ObservableObject {
     /// Called on quit: never leave the heater on when the app was pulsing below what the mug holds by itself,
     /// and never leave the light parked on its dim blink.
     func prepareForQuit() {
+        releaseMug()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.5))
+    }
+
+    /// Leaves the mug safe to walk away from: heater off if Ember Bar was pulsing it below what the mug holds by
+    /// itself, and the light on its steady color rather than the dim half of a blink. The writes are queued; the caller
+    /// keeps the link open long enough for them to land.
+    private func releaseMug() {
         guard let p = peripheral else { return }
         if let base = lightBase, lastLight != base, let c = chars[EmberUUID.ledColor] {
             p.writeValue(EmberCodec.encodeLED(base), for: c, type: .withResponse)
@@ -393,7 +549,6 @@ final class MugManager: NSObject, ObservableObject {
         if case let g? = goal, MugLimits.needsPulsing(g), let c = chars[EmberUUID.targetTemp] {
             p.writeValue(EmberCodec.encodeTemp(MugLimits.off), for: c, type: .withResponse)
         }
-        RunLoop.main.run(until: Date().addingTimeInterval(0.5))
     }
 
     // MARK: Log (~/Library/Logs/EmberBar.log)
@@ -454,27 +609,35 @@ extension MugManager: CBCentralManagerDelegate {
     nonisolated func centralManager(_ central: CBCentralManager, didDiscover p: CBPeripheral,
                                     advertisementData: [String: Any], rssi: NSNumber) {
         let advName = (advertisementData[CBAdvertisementDataLocalNameKey] as? String) ?? p.name ?? ""
-        guard advName.hasPrefix("Ember") else { return }
+        let services = (advertisementData[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID]) ?? []
+        let ember = services.contains { EmberUUID.isEmberService($0.uuidString) }
         MainActor.assumeIsolated {
-            name = advName
-            connect(p)
+            if let id = pairedID {
+                // Looking for this Mac's own mug (it may have been renamed, so match by identity, not name).
+                if p.identifier == id, link == .scanning { connect(p) }
+                return
+            }
+            nearbyMugs.saw(id: p.identifier, name: advName, rssi: rssi.intValue, at: Date(), advertisesEmberService: ember)
+            if nearbyMugs.list(now: Date()).contains(where: { $0.id == p.identifier }) { discovered[p.identifier] = p }
+            publishNearby()
         }
     }
 
     nonisolated func centralManager(_ central: CBCentralManager, didConnect p: CBPeripheral) {
         MainActor.assumeIsolated {
+            guard isCurrent(p) else { return }
             waitTimer?.invalidate()
-            defaults.set(p.identifier.uuidString, forKey: "peripheral")
+            defaults.set(p.identifier.uuidString, forKey: Self.pairedKey)
             p.discoverServices([CBUUID(string: EmberUUID.service)])
         }
     }
 
     nonisolated func centralManager(_ central: CBCentralManager, didFailToConnect p: CBPeripheral, error: Error?) {
-        MainActor.assumeIsolated { reconnectSoon() }
+        MainActor.assumeIsolated { if isCurrent(p) { reconnectSoon() } }
     }
 
     nonisolated func centralManager(_ central: CBCentralManager, didDisconnectPeripheral p: CBPeripheral, error: Error?) {
-        MainActor.assumeIsolated { reconnectSoon() }
+        MainActor.assumeIsolated { if isCurrent(p) { reconnectSoon() } }
     }
 
     private func reconnectSoon() {
@@ -484,7 +647,8 @@ extension MugManager: CBCentralManagerDelegate {
         link = .scanning
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
             MainActor.assumeIsolated {
-                guard let self else { return }
+                // Something else (Connect on another mug, Forget) may have moved on during the wait.
+                guard let self, self.link == .scanning else { return }
                 if let p = self.peripheral { self.connect(p) } else { self.startScan() }
             }
         }
@@ -494,17 +658,20 @@ extension MugManager: CBCentralManagerDelegate {
 extension MugManager: CBPeripheralDelegate {
     nonisolated func peripheral(_ p: CBPeripheral, didDiscoverServices error: Error?) {
         MainActor.assumeIsolated {
+            guard isCurrent(p) else { return }
             for s in p.services ?? [] { p.discoverCharacteristics(nil, for: s) }
         }
     }
 
     nonisolated func peripheral(_ p: CBPeripheral, didDiscoverCharacteristicsFor s: CBService, error: Error?) {
         MainActor.assumeIsolated {
+            guard isCurrent(p) else { return }
+            mugProblem = nil
             for c in s.characteristics ?? [] {
                 chars[c.uuid.uuidString.uppercased()] = c
                 if c.uuid.uuidString.uppercased() == EmberUUID.pushEvents { p.setNotifyValue(true, for: c) }
             }
-            for uuid in [EmberUUID.firmware, EmberUUID.ledColor, EmberUUID.battery, EmberUUID.liquidLevel] {
+            for uuid in [EmberUUID.firmware, EmberUUID.ledColor, EmberUUID.battery, EmberUUID.liquidLevel, EmberUUID.mugName] {
                 if let c = chars[uuid] { p.readValue(for: c) }
             }
             link = .connected
@@ -512,10 +679,28 @@ extension MugManager: CBPeripheralDelegate {
         }
     }
 
+    nonisolated func peripheral(_ p: CBPeripheral, didWriteValueFor c: CBCharacteristic, error: Error?) {
+        let uuid = c.uuid.uuidString.uppercased()
+        let reason = error?.localizedDescription
+        MainActor.assumeIsolated {
+            guard isCurrent(p) else { return }
+            guard let reason else { refusedWrites = 0; return }
+            refusedWrites += 1
+            if refusedWrites == 1 || refusedWrites % 50 == 0 { log("write refused (\(uuid)), \(refusedWrites) in a row: \(reason)") }
+            let setUp = "If it was reset, set it up once in Ember's phone app, then quit that app."
+            if uuid == EmberUUID.mugName {
+                mugProblem = "The mug didn't accept the new name. " + setUp
+            } else if refusedWrites >= 3, mugProblem == nil {
+                mugProblem = "The mug isn't accepting Ember Bar's settings. " + setUp
+            }
+        }
+    }
+
     nonisolated func peripheral(_ p: CBPeripheral, didUpdateValueFor c: CBCharacteristic, error: Error?) {
         guard error == nil, let data = c.value else { return }
         let uuid = c.uuid.uuidString.uppercased()
         MainActor.assumeIsolated {
+            guard isCurrent(p) else { return }
             switch uuid {
             case EmberUUID.currentTemp: temp = EmberCodec.decodeTemp(data)
             case EmberUUID.targetTemp:
@@ -527,6 +712,7 @@ extension MugManager: CBPeripheralDelegate {
             case EmberUUID.battery: battery = EmberCodec.decodeBattery(data); checkBattery()
             case EmberUUID.liquidLevel: level = data.first.map(Int.init)
             case EmberUUID.firmware: firmware = EmberCodec.decodeFirmware(data)
+            case EmberUUID.mugName: if let n = EmberCodec.decodeName(data) { name = n }
             case EmberUUID.ledColor:
                 led = EmberCodec.decodeLED(data)
                 if homeLight == nil, let l = led { homeLight = l }  // first connect: adopt the mug's own color

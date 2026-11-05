@@ -8,12 +8,56 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         MainActor.assumeIsolated { mug?.prepareForQuit() }
     }
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        guard let dir = ProcessInfo.processInfo.environment["EMBERBAR_SNAPSHOT"] else { return }
+        MainActor.assumeIsolated { Snapshot.run(into: URL(fileURLWithPath: dir)) }
+    }
+}
+
+/// Development aid: `EMBERBAR_SNAPSHOT=<folder> "/Applications/Ember Bar.app/Contents/MacOS/EmberBar"` draws the
+/// popover and the window's pages to PNGs and exits, so the layout can be checked without clicking the menu bar.
+/// Nothing in a snapshot run touches Bluetooth: every MugManager in it is made with `live: false`, so it shows the
+/// saved programs and settings with no readings.
+@MainActor
+enum Snapshot {
+    nonisolated static var requested: Bool { ProcessInfo.processInfo.environment["EMBERBAR_SNAPSHOT"] != nil }
+
+    static func run(into dir: URL) {
+        let mug = MugManager(live: false)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+            write(CompactView().environmentObject(mug), size: NSSize(width: 320, height: 640), to: dir.appendingPathComponent("popover.png"))
+            for (page, file) in [(WindowPage.programs, "programs.png"), (.mug, "mug.png")] {
+                mug.windowPage = page
+                write(MainWindow().environmentObject(mug), size: NSSize(width: 860, height: 640), to: dir.appendingPathComponent(file))
+            }
+            write(PresetEditor(preset: Preset(name: "New program", mode: .hold(40)), save: { _ in }, cancel: {}).environmentObject(mug),
+                  size: NSSize(width: 440, height: 360), to: dir.appendingPathComponent("editor.png"))
+            exit(0)
+        }
+    }
+
+    private static func write<V: View>(_ view: V, size: NSSize, to url: URL) {
+        let host = NSHostingView(rootView: view.background(Color(nsColor: .windowBackgroundColor)))
+        let window = NSWindow(contentRect: NSRect(origin: .zero, size: size), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.contentView = host
+        window.setFrameOrigin(NSPoint(x: -10_000, y: -10_000))  // drawn for real, but off every screen
+        window.orderFrontRegardless()
+        host.layoutSubtreeIfNeeded()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.8))
+        host.display()
+        guard let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { return }
+        host.cacheDisplay(in: host.bounds, to: rep)
+        try? rep.representation(using: .png, properties: [:])?.write(to: url)
+        window.orderOut(nil)
+    }
 }
 
 @main
 struct EmberBarApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var delegate
-    @StateObject private var mug = MugManager()
+    @StateObject private var mug = MugManager(live: !Snapshot.requested)
 
     var body: some Scene {
         MenuBarExtra {
@@ -108,6 +152,7 @@ enum StatusIcon {
 
 extension MugManager {
     var statusLine: String {
+        if link == .scanning && !hasPairedMug { return "Choose your mug" }
         guard link == .connected else { return link.label }
         if let paused = pausedText { return paused }
         switch phase {
@@ -158,18 +203,86 @@ extension EmberCodec.RGB {
     }
 }
 
+extension TempColor {
+    static func color(_ celsius: Double) -> Color { rgb(celsius).color }
+}
+
+/// The temperature slider, color-coded: its track runs blue (cool) through amber at 120 F (where the mug holds by
+/// itself; below it Ember Bar pulses the heater) to red, and the thumb takes the color of the value. Drawn by hand
+/// because macOS sliders ignore tint. Drag or click anywhere on it; arrow keys and VoiceOver step it.
 struct TempSlider: View {
     @EnvironmentObject var mug: MugManager
     @Binding var celsius: Double
     var onCommit: (Double) -> Void = { _ in }
 
+    static let range = MugLimits.sliderFloor...MugLimits.ceiling
+    private static let thumb: CGFloat = 16
+    /// A key-held change waits here and is sent shortly after the last step, in case the key-up never arrives
+    /// (focus moved, popover closed). Spelled out as `State(initialValue:)` like the rest of this file: the @State macro
+    /// isn't available with Command Line Tools only.
+    private let _pending = State(initialValue: PendingCommit())
+
+    /// One step in the shown unit: half a degree C, or a whole degree F.
+    private var step: Double { mug.unit == .celsius ? 0.5 : 1 }
+
+    private func snapped(_ c: Double) -> Double {
+        let d = (mug.unit.display(c) / step).rounded() * step
+        return min(max(mug.unit.toCelsius(d), Self.range.lowerBound), Self.range.upperBound)
+    }
+
+    private func nudge(_ steps: Double, commit: Bool = true) {
+        celsius = snapped(mug.unit.toCelsius(mug.unit.display(celsius) + steps * step))
+        if commit { onCommit(celsius) }
+    }
+
     var body: some View {
-        let lo = mug.unit.display(30), hi = mug.unit.display(MugLimits.ceiling)
-        Slider(value: Binding(get: { mug.unit.display(celsius) },
-                              set: { celsius = mug.unit.toCelsius($0) }),
-               in: lo...hi, step: mug.unit == .celsius ? 0.5 : 1) { editing in
-            if !editing { onCommit(celsius) }
+        let span = Self.range.upperBound - Self.range.lowerBound
+        let stops = TempColor.stops.map { Gradient.Stop(color: $0.rgb.color, location: ($0.celsius - Self.range.lowerBound) / span) }
+        let heldAt = (MugLimits.lowestHeld - Self.range.lowerBound) / span
+        GeometryReader { geo in
+            let usable = max(1, geo.size.width - Self.thumb)
+            let position = (min(max(celsius, Self.range.lowerBound), Self.range.upperBound) - Self.range.lowerBound) / span
+            ZStack(alignment: .leading) {
+                Capsule()
+                    .fill(LinearGradient(stops: stops, startPoint: .leading, endPoint: .trailing))
+                    .frame(width: usable, height: 6)
+                    .offset(x: Self.thumb / 2)
+                Rectangle().fill(.primary.opacity(0.55)).frame(width: 1.5, height: 12)
+                    .offset(x: Self.thumb / 2 + usable * heldAt)
+                Circle()
+                    .fill(TempColor.color(celsius))
+                    .overlay(Circle().strokeBorder(.white, lineWidth: 2))
+                    .shadow(color: .black.opacity(0.3), radius: 1.5, y: 0.5)
+                    .frame(width: Self.thumb, height: Self.thumb)
+                    .offset(x: usable * position)
+            }
+            .frame(width: geo.size.width, height: geo.size.height)
+            .contentShape(Rectangle())
+            .gesture(DragGesture(minimumDistance: 0)
+                .onChanged { v in
+                    celsius = snapped(Self.range.lowerBound + Double((v.location.x - Self.thumb / 2) / usable) * span)
+                }
+                .onEnded { _ in onCommit(celsius) })
         }
+        .frame(height: 20)
+        .focusable()
+        // Holding an arrow moves the thumb; the mug gets the value once, on release.
+        .onKeyPress(keys: [.leftArrow, .rightArrow], phases: [.down, .repeat, .up]) { press in
+            if press.phase == .up {
+                _pending.wrappedValue.cancel()
+                onCommit(celsius)
+            } else {
+                nudge(press.key == .leftArrow ? -1 : 1, commit: false)
+                let commit = onCommit, binding = $celsius
+                _pending.wrappedValue.schedule(after: 0.8) { commit(binding.wrappedValue) }
+            }
+            return .handled
+        }
+        .accessibilityElement()
+        .accessibilityLabel("Temperature")
+        .accessibilityValue(mug.unit.dual(celsius))
+        .accessibilityAdjustableAction { nudge($0 == .increment ? 1 : -1) }
+        .help("Blue is cool, red is hot. The mark is \(mug.unit.dual(MugLimits.lowestHeld)): the mug holds that and above by itself; below it Ember Bar pulses the heater.")
     }
 }
 
@@ -235,12 +348,76 @@ struct CompactView: View {
     @Environment(\.openWindow) private var openWindow
     private let _holdC = State<Double>(initialValue: 37.0)
     private var holdC: Double { get { _holdC.wrappedValue } nonmutating set { _holdC.wrappedValue = newValue } }
+    /// What the inline name box is naming, if it's open. (Inline, not an alert: an alert over a menu-bar panel can
+    /// close along with the panel.)
+    private let _naming = State<Naming?>(initialValue: nil)
+    private var naming: Naming? { get { _naming.wrappedValue } nonmutating set { _naming.wrappedValue = newValue } }
+    private let _nameProblem = State<String?>(initialValue: nil)
+    private var nameProblem: String? { get { _nameProblem.wrappedValue } nonmutating set { _nameProblem.wrappedValue = newValue } }
+
+    enum Naming: Equatable {
+        case program(UUID), mug, newHold(Double)
+        var title: String {
+            switch self {
+            case .program: "Rename program"
+            case .mug: "Rename mug"
+            case .newHold: "Save as program"
+            }
+        }
+    }
+
+    private func startNaming(_ what: Naming, _ current: String) {
+        draftName = current
+        nameProblem = nil
+        naming = what
+    }
+
+    private func finishNaming() {
+        switch naming {
+        case .program(let id)?: mug.renameProgram(id, to: draftName)
+        case .newHold(let c)?: mug.addProgram(name: draftName, mode: .hold(c))
+        case .mug?:
+            if let problem = mug.renameMug(draftName) { nameProblem = problem; return }
+        case nil: break
+        }
+        naming = nil
+    }
+
+    @ViewBuilder private var nameBox: some View {
+        if let what = naming {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(what.title).font(.caption).bold()
+                HStack {
+                    TextField("Name", text: _draftName.projectedValue).textFieldStyle(.roundedBorder).onSubmit(finishNaming)
+                    Button("Save", action: finishNaming).keyboardShortcut(.defaultAction)
+                    Button("Cancel") { naming = nil }
+                }
+                if let problem = nameProblem { Text(problem).font(.caption).foregroundStyle(.red) }
+            }
+            .padding(8)
+            .background(RoundedRectangle(cornerRadius: 8).fill(.quaternary))
+        }
+    }
+    private let _draftName = State<String>(initialValue: "")
+    private var draftName: String { get { _draftName.wrappedValue } nonmutating set { _draftName.wrappedValue = newValue } }
+
+    private func openEditor(_ preset: Preset) {
+        mug.openInWindow(page: .programs, editing: preset)
+        openWindow(id: "main")
+        NSApp.activate(ignoringOtherApps: true)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(mug.name).font(.headline)
+                    HStack(spacing: 4) {
+                        Text(mug.name).font(.headline)
+                        if mug.link == .connected {
+                            Button { startNaming(.mug, mug.name) } label: { Image(systemName: "pencil") }
+                                .buttonStyle(.borderless).help("Rename the mug")
+                        }
+                    }
                     Text(mug.link.label).font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
@@ -259,6 +436,14 @@ struct CompactView: View {
                     Text(mug.statusLine).font(.callout)
                     if let g = mug.goal { Text("Goal \(mug.unit.dual(g))").font(.caption).foregroundStyle(.secondary) }
                 }
+            }
+
+            nameBox
+            if let err = mug.mugProblem { Text(err).font(.caption).foregroundStyle(.red) }
+            if !mug.hasPairedMug { NearbyMugsList() }
+            else if mug.mugMissing {
+                Text("Not finding your mug? Wake it, and quit Ember's app on your phone. Still nothing: open the window, Mug, Forget this mug, and connect it again.")
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
 
             PowerRow()
@@ -282,11 +467,30 @@ struct CompactView: View {
                     .buttonStyle(.bordered)
                     .tint(mug.activePresetID == p.id && mug.mode == p.mode ? .orange : nil)
                     .help([mug.modeDescription(p.mode), mug.averageNote(p.mode)].compactMap { $0 }.joined(separator: "\n"))
+                    .contextMenu {
+                        Button("Rename…") { startNaming(.program(p.id), p.name) }
+                        Button("Edit…") { openEditor(p) }
+                        Divider()
+                        Button("Delete", role: .destructive) { mug.deleteProgram(p.id) }
+                    }
                 }
+                Button { openEditor(Preset(name: "New program", mode: .hold(holdC))) } label: {
+                    Label("New program", systemImage: "plus").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .help("Add a program: a hold or a glide. Right-click a program to rename, edit or delete it.")
             }
 
             VStack(alignment: .leading, spacing: 4) {
-                Text("Hold at \(mug.unit.dual(holdC))" + (mug.averageNote(.hold(holdC)).map { ", pulsed, \($0)" } ?? "")).font(.caption)
+                HStack {
+                    Circle().fill(TempColor.color(holdC)).frame(width: 8, height: 8)
+                    Text("Hold at \(mug.unit.dual(holdC))" + (mug.averageNote(.hold(holdC)).map { ", pulsed, \($0)" } ?? "")).font(.caption)
+                    Spacer()
+                    Button("Save as program") {
+                        startNaming(.newHold((holdC * 10).rounded() / 10), "Hold \(mug.unit.format(holdC))\(mug.unit.rawValue)")
+                    }
+                        .buttonStyle(.borderless).font(.caption)
+                }
                 TempSlider(celsius: _holdC.projectedValue) { mug.setHold(celsius: $0) }
             }
 
@@ -316,20 +520,17 @@ struct MainWindow: View {
     @EnvironmentObject var mug: MugManager
     var body: some View {
         NavigationSplitView {
-            List {
-                NavigationLink(value: "now") { Label("Now", systemImage: "cup.and.saucer") }
-                NavigationLink(value: "presets") { Label("Presets & cycles", systemImage: "list.bullet") }
-                NavigationLink(value: "mug") { Label("Mug", systemImage: "gearshape") }
-            }
-            .navigationDestination(for: String.self) { page in
-                switch page {
-                case "presets": PresetsPage()
-                case "mug": MugPage()
-                default: NowPage()
-                }
+            List(selection: Binding<WindowPage?>(get: { mug.windowPage }, set: { if let p = $0 { mug.windowPage = p } })) {
+                Label("Now", systemImage: "cup.and.saucer").tag(WindowPage.now)
+                Label("Programs", systemImage: "list.bullet").tag(WindowPage.programs)
+                Label("Mug", systemImage: "gearshape").tag(WindowPage.mug)
             }
         } detail: {
-            NowPage()
+            switch mug.windowPage {
+            case .now: NowPage()
+            case .programs: PresetsPage()
+            case .mug: MugPage()
+            }
         }
         .toolbar {
             Button { mug.reconnect() } label: { Image(systemName: "arrow.clockwise") }.help("Reconnect")
@@ -425,19 +626,16 @@ struct PresetsPage: View {
                         Spacer()
                         Button("Use") { mug.apply(p) }
                         Button("Edit") { editing = p }
-                        Button(role: .destructive) { mug.presets.removeAll { $0.id == p.id } } label: { Image(systemName: "trash") }
+                        Button(role: .destructive) { mug.deleteProgram(p.id) } label: { Image(systemName: "trash") }
                             .buttonStyle(.borderless)
                     }
                 }
                 .onMove { mug.presets.move(fromOffsets: $0, toOffset: $1) }
             } header: {
                 HStack {
-                    Text("Presets")
+                    Text("Programs")
                     Spacer()
-                    Button("New hold") { editing = Preset(name: "New hold", mode: .hold(40)) }
-                    Button("New glide") {
-                        editing = Preset(name: "New glide", mode: .glide([GlideStep(target: 45, minutes: 10), GlideStep(target: 38, minutes: nil)]))
-                    }
+                    Button("New program") { editing = Preset(name: "New program", mode: .hold(40)) }
                     Button("Restore defaults") { mug.presets = Preset.defaults }
                 }
             } footer: {
@@ -452,7 +650,15 @@ struct PresetsPage: View {
             } cancel: { editing = nil }
             .environmentObject(mug)
         }
-        .navigationTitle("Presets & cycles")
+        .navigationTitle("Programs")
+        .onAppear(perform: takeEditRequest)
+        .onChange(of: mug.editRequest) { takeEditRequest() }
+    }
+
+    private func takeEditRequest() {
+        guard let p = mug.editRequest else { return }
+        mug.editRequest = nil
+        editing = p
     }
 }
 
@@ -472,12 +678,19 @@ struct PresetEditor: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             TextField("Name", text: _preset.projectedValue.name).textFieldStyle(.roundedBorder)
+            Picker("Type", selection: Binding(get: { ProgramKind(preset.mode) }, set: { preset.mode = $0.convert(preset.mode) })) {
+                ForEach(ProgramKind.allCases, id: \.self) { Text($0.label).tag($0) }
+            }
+            .pickerStyle(.segmented)
             switch preset.mode {
             case .off:
                 Text("Heater stays off; the coffee cools on its own.")
             case .hold(let t):
                 let binding = Binding(get: { t }, set: { preset.mode = .hold($0) })
-                Text("Hold at \(mug.unit.dual(t))" + mug.pulsedSuffix(preset.mode))
+                HStack {
+                    Circle().fill(TempColor.color(t)).frame(width: 8, height: 8)
+                    Text("Hold at \(mug.unit.dual(t))" + mug.pulsedSuffix(preset.mode))
+                }
                 TempSlider(celsius: binding)
                 if let avg = mug.averageNote(preset.mode) { Text(avg).font(.caption).foregroundStyle(.secondary) }
             case .glide(let steps):
@@ -549,6 +762,10 @@ struct GlideStepRow: View {
 
 struct MugPage: View {
     @EnvironmentObject var mug: MugManager
+    private let _draftName = State<String>(initialValue: "")
+    private var draftName: String { get { _draftName.wrappedValue } nonmutating set { _draftName.wrappedValue = newValue } }
+    private let _nameProblem = State<String?>(initialValue: nil)
+    private var nameProblem: String? { get { _nameProblem.wrappedValue } nonmutating set { _nameProblem.wrappedValue = newValue } }
 
     var body: some View {
         Form {
@@ -562,7 +779,7 @@ struct MugPage: View {
                     get: { (mug.homeLight ?? mug.led)?.color ?? .white },
                     set: { if let c = EmberCodec.RGB($0) { mug.setHomeLight(c) } }), supportsOpacity: false)
                 Toggle("Slow blink while Ember Bar cycles the heater", isOn: $mug.blinkWhileCycling)
-                Text("A preset can have its own light color: Presets & cycles, Edit. It blinks, 6 seconds bright and 6 dim, whenever Ember Bar is pulsing the heater toward the goal.")
+                Text("A program can have its own light color: Programs, Edit. It blinks, 6 seconds bright and 6 dim, whenever Ember Bar is pulsing the heater toward the goal.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section("Gentle heating (below \(mug.unit.dual(MugLimits.lowestHeld)))") {
@@ -580,7 +797,25 @@ struct MugPage: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section("Mug") {
-                LabeledContent("Name", value: mug.name)
+                LabeledContent("Name") {
+                    HStack {
+                        TextField("Name", text: _draftName.projectedValue).labelsHidden().textFieldStyle(.roundedBorder).frame(maxWidth: 180)
+                            .onAppear { draftName = mug.name }
+                            .onChange(of: mug.name) { old, new in if draftName == old { draftName = new } }
+                        Button("Rename") { nameProblem = mug.renameMug(draftName) }
+                            .disabled(draftName == mug.name || mug.link != .connected)
+                    }
+                }
+                if let problem = nameProblem ?? mug.mugProblem { Text(problem).font(.caption).foregroundStyle(.red) }
+                if mug.hasPairedMug {
+                    LabeledContent("This Mac's mug") {
+                        Button("Forget this mug") { mug.forgetMug() }
+                    }
+                    Text("Forget it to connect a different Ember. The heater is switched off first if Ember Bar was pulsing it.")
+                        .font(.caption).foregroundStyle(.secondary)
+                } else {
+                    NearbyMugsList()
+                }
                 LabeledContent("Connection", value: mug.link.label)
                 LabeledContent("Battery", value: mug.battery.map { "\($0.percent)%\($0.charging ? ", charging" : "")" } ?? "–")
                 LabeledContent("Liquid level", value: mug.level.map { "\($0) of 30" } ?? "–")
@@ -590,4 +825,41 @@ struct MugPage: View {
         .formStyle(.grouped)
         .navigationTitle("Mug")
     }
+}
+
+
+/// "Mugs nearby": shown until this Mac has a mug of its own, with Connect for each Ember in range.
+struct NearbyMugsList: View {
+    @EnvironmentObject var mug: MugManager
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Mugs nearby").font(.caption).bold()
+            if mug.nearby.isEmpty {
+                Text("Looking… Wake your mug (pick it up or set it on its coaster). Still nothing? Hold the button on the bottom until the light flashes blue, and quit Ember's app on your phone. The mug needs to have been set up in Ember's app once (after any reset).")
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+            ForEach(mug.nearby) { m in
+                HStack {
+                    Image(systemName: "cup.and.saucer.fill").foregroundStyle(.orange)
+                    Text(m.name)
+                    Spacer()
+                    Button("Connect") { mug.pair(m.id) }
+                }
+            }
+        }
+    }
+}
+
+/// One delayed action that a newer one replaces (the slider's key-hold commit).
+@MainActor
+final class PendingCommit {
+    private var item: DispatchWorkItem?
+    func schedule(after seconds: Double, _ action: @escaping () -> Void) {
+        item?.cancel()
+        let next = DispatchWorkItem(block: action)
+        item = next
+        DispatchQueue.main.asyncAfter(deadline: .now() + seconds, execute: next)
+    }
+    func cancel() { item?.cancel(); item = nil }
 }

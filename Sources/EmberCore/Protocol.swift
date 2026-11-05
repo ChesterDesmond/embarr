@@ -7,6 +7,13 @@ public enum EmberUUID {
     public static func characteristic(_ n: Int) -> String {
         String(format: "FC54%04X-236C-4C94-8FA9-944A3E5353FA", n)
     }
+    /// Whether a service UUID is one of Ember's: FC54xxxx-236C-4C94-8FA9-944A3E5353FA. The Cup and Mug 2 use
+    /// FC543622; python-ember-mug lists FC543621 and FC5421A1 for travel mugs.
+    public static func isEmberService(_ uuid: String) -> Bool {
+        let u = uuid.uppercased()
+        return u.count == 36 && u.hasPrefix("FC54") && u.hasSuffix("-236C-4C94-8FA9-944A3E5353FA")
+    }
+    public static let mugName = characteristic(0x01)       // read/write, ASCII, up to 14 characters
     public static let currentTemp = characteristic(0x02)   // read, uint16 LE, 0.01 C
     public static let targetTemp = characteristic(0x03)    // read/write, uint16 LE, 0.01 C; 0 = heater off
     public static let unit = characteristic(0x04)          // read/write, 0 = C, 1 = F
@@ -29,6 +36,8 @@ public enum MugLimits {
     /// Whether Ember Bar has to pulse the heater to reach `goal`, because the mug won't hold it by itself.
     /// The 0.01 slack keeps 120 F (48.8889 C, a whole-degree Fahrenheit slider stop) with the mug.
     public static func needsPulsing(_ goal: Double) -> Bool { goal < lowestHeld - 0.01 }
+    /// Bottom of the temperature sliders (86 F).
+    public static let sliderFloor = 30.0
     /// Highest target the app offers (145 F).
     public static let ceiling = 62.5
     /// Value that turns the heater off.
@@ -99,6 +108,31 @@ public enum EmberCodec {
     }
 
     public static func encodeLED(_ c: RGB) -> Data { Data([c.r, c.g, c.b, 0xFF]) }
+
+    /// Longest name the mug stores (python-ember-mug's limit).
+    public static let maxNameLength = 14
+    /// Characters a mug name may use: plain letters, digits, spaces and a little punctuation. Kept conservative
+    /// because the firmware's own rules aren't documented.
+    static let namePunctuation = "-_.,'!&()"
+    static let nameCharacters = CharacterSet(charactersIn:
+        "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 " + namePunctuation)
+    /// What a mug name may be, for the rename box.
+    public static var nameHint: String {
+        "Up to \(maxNameLength) characters: letters, numbers, spaces and " + namePunctuation.map(String.init).joined(separator: " ")
+    }
+
+    /// The bytes to write to rename the mug, or nil if the mug couldn't take this name.
+    public static func encodeName(_ name: String) -> Data? {
+        let trimmed = name.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty, trimmed.count <= maxNameLength,
+              trimmed.unicodeScalars.allSatisfy(nameCharacters.contains) else { return nil }
+        return Data(trimmed.utf8)
+    }
+
+    public static func decodeName(_ data: Data) -> String? {
+        let name = String(decoding: data.prefix { $0 != 0 }, as: UTF8.self).trimmingCharacters(in: .whitespaces)
+        return name.isEmpty ? nil : name
+    }
 }
 
 extension EmberCodec.RGB {
