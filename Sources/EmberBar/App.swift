@@ -2,6 +2,7 @@ import AppKit
 import Charts
 import EmberCore
 import SwiftUI
+import UniformTypeIdentifiers
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     var mug: MugManager?
@@ -487,7 +488,7 @@ struct CompactView: View {
 
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 6) {
                 ForEach(mug.presets) { p in
-                    Button { mug.apply(p) } label: {
+                    Button { mug.tap(p) } label: {
                         VStack(spacing: 1) {
                             Text(p.name)
                             ForEach(mug.presetCaption(p.mode), id: \.self) {
@@ -497,7 +498,9 @@ struct CompactView: View {
                         .frame(maxWidth: .infinity)
                     }
                     .highlighted(mug.isRunning(p))
-                    .help([mug.modeDescription(p.mode), mug.averageNote(p.mode)].compactMap { $0 }.joined(separator: "\n"))
+                    .help([mug.modeDescription(p.mode), mug.averageNote(p.mode),
+                           mug.isRunning(p) ? mug.runningTileClick : nil]
+                        .compactMap { $0 }.joined(separator: "\n"))
                     .contextMenu {
                         Button("Rename…") { startNaming(.program(p.id), p.name) }
                         Button("Edit…") { openEditor(p) }
@@ -584,7 +587,9 @@ struct NowPage: View {
                         Text("Mode: \(mug.modeDescription(mug.mode))").foregroundStyle(.secondary)
                         if let avg = mug.averageNote(mug.mode) { Text(avg).foregroundStyle(.secondary) }
                         if let t = mug.mugTarget {
-                            Text("Mug's own target: \(t == 0 ? "off" : mug.unit.format(t))").font(.caption).foregroundStyle(.secondary)
+                            Text("Mug's heater setting right now: \(t == 0 ? "off" : mug.unit.format(t))")
+                                .font(.caption).foregroundStyle(.secondary)
+                                .help("What the mug itself is set to, read from it every few seconds. Ember Bar normally sets it, so it matches your goal from \(mug.unit.dual(MugLimits.lowestHeld)) up. Below that, Ember Bar switches the heater on and off in short bursts, so this flips between \(mug.unit.format(MugLimits.pulseOn)) and off.")
                         }
                     }
                 }
@@ -617,10 +622,10 @@ struct NowPage: View {
                 } else {
                     Text("The chart fills in while the mug is connected.").foregroundStyle(.secondary).frame(height: 120)
                 }
-                Text("Presets").font(.headline)
+                Text("Programs").font(.headline)
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 150))], spacing: 8) {
                     ForEach(mug.presets) { p in
-                        Button { mug.apply(p) } label: {
+                        Button { mug.tap(p) } label: {
                             VStack {
                                 Text(p.name).bold()
                                 Text(mug.presetCaption(p.mode).joined(separator: " · ")).font(.caption).lineLimit(2)
@@ -669,11 +674,17 @@ struct PresetsPage: View {
                     Text("Programs")
                     Spacer()
                     Button("New program") { editing = Preset(name: "New program", mode: .hold(40)) }
+                    Menu("Share") {
+                        Button("Export programs…", action: exportPrograms)
+                        Button("Import programs…", action: importPrograms)
+                    }
+                    .fixedSize()
                     Button("Restore defaults") { mug.presets = Preset.defaults }
                 }
             } footer: {
-                Text("Below \(mug.unit.dual(MugLimits.lowestHeld)) the mug won't hold a temperature by itself, so Ember Bar switches the heater on in short bursts while the Mac is near the mug. The coffee swings a little around the goal, so those presets show an approximate average. A glide steps the goal down over time, counted from when you pour.")
+                if let note = shareNote { Text(note) }
             }
+            Section("How programs heat") { ModeGuide() }
         }
         .sheet(item: _editing.projectedValue) { p in
             PresetEditor(preset: p) { saved in
@@ -688,10 +699,118 @@ struct PresetsPage: View {
         .onChange(of: mug.editRequest) { takeEditRequest() }
     }
 
+    private let _shareNote = State<String?>(initialValue: nil)
+    private var shareNote: String? { get { _shareNote.wrappedValue } nonmutating set { _shareNote.wrappedValue = newValue } }
+
+    /// Saves every program to a file another Ember Bar user can import. Only the programs: not the paired mug.
+    private func exportPrograms() {
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "Ember Bar programs.json"
+        panel.allowedContentTypes = [.json]
+        NSApp.activate(ignoringOtherApps: true)
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            try mug.exportPrograms(to: url)
+            let n = mug.presets.count == 1 ? "1 program" : "\(mug.presets.count) programs"
+            shareNote = "Saved \(n) to \(url.lastPathComponent). Send that file to someone with Ember Bar; they use Share, Import programs."
+        } catch {
+            shareNote = "Couldn't save: \(error.localizedDescription)"
+        }
+    }
+
+    private func importPrograms() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.json]
+        panel.allowsMultipleSelection = false
+        NSApp.activate(ignoringOtherApps: true)
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        shareNote = mug.importPrograms(from: url)
+    }
+
     private func takeEditRequest() {
         guard let p = mug.editRequest else { return }
         mug.editRequest = nil
         editing = p
+    }
+}
+
+/// The Programs page's guide to the four ways a program can heat, each with a sketch of the coffee's temperature
+/// over time.
+struct ModeGuide: View {
+    @EnvironmentObject var mug: MugManager
+
+    private struct Entry: Identifiable {
+        let title: String, text: String, sketch: [CGPoint], tint: Color
+        var id: String { title }
+    }
+
+    private var entries: [Entry] {
+        let floor = mug.unit.dual(MugLimits.lowestHeld)
+        let off = stride(from: 0.0, through: 1.0, by: 0.05).map { CGPoint(x: $0, y: 0.08 + 0.84 * (1 - exp(-2.5 * $0))) }
+        return [
+            Entry(title: "Hold, \(floor) and up",
+                  text: "The mug keeps the coffee at that temperature by itself, even when the Mac is asleep or away.",
+                  sketch: [.init(x: 0, y: 0.08), .init(x: 0.25, y: 0.45), .init(x: 0.35, y: 0.5), .init(x: 1, y: 0.5)],
+                  tint: TempColor.color(55)),
+            Entry(title: "Hold, below \(floor)",
+                  text: "The mug won't hold this low, so Ember Bar switches the heater on in short bursts. The Mac has to be on and near the mug. The coffee swings a little around the goal, so these programs show an average.",
+                  sketch: [.init(x: 0, y: 0.08), .init(x: 0.3, y: 0.62), .init(x: 0.4, y: 0.72), .init(x: 0.47, y: 0.62),
+                           .init(x: 0.6, y: 0.72), .init(x: 0.67, y: 0.62), .init(x: 0.8, y: 0.72), .init(x: 0.87, y: 0.62),
+                           .init(x: 1, y: 0.72)],
+                  tint: TempColor.color(42)),
+            Entry(title: "Glide",
+                  text: "Steps the goal down over time, counted from when you pour, for coffee that tastes different as it cools. Ember Bar changes each step, so keep the Mac near the mug.",
+                  sketch: [.init(x: 0, y: 0.08), .init(x: 0.15, y: 0.3), .init(x: 0.4, y: 0.3), .init(x: 0.48, y: 0.5),
+                           .init(x: 0.7, y: 0.5), .init(x: 0.78, y: 0.7), .init(x: 1, y: 0.7)],
+                  tint: TempColor.color(48)),
+            Entry(title: "Heater off",
+                  text: "Nothing heats. The coffee cools on its own, the way \"Just let it cool\" works.",
+                  sketch: off, tint: .secondary),
+        ]
+    }
+
+    var body: some View {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 200), alignment: .top)], alignment: .leading, spacing: 12) {
+            ForEach(entries) { e in
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 8) {
+                        Sketch(points: e.sketch)
+                            .stroke(e.tint, style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
+                            .frame(width: 56, height: 28)
+                        Text(e.title).bold()
+                    }
+                    Text(e.text).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+                .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(.quaternary.opacity(0.5)))
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
+    /// A line through `points`, each 0...1 across and down the frame (temperature falls downward).
+    private struct Sketch: Shape {
+        let points: [CGPoint]
+        func path(in r: CGRect) -> Path {
+            var p = Path()
+            p.addLines(points.map { CGPoint(x: r.minX + $0.x * r.width, y: r.minY + $0.y * r.height) })
+            return p
+        }
+    }
+}
+
+/// The app's version, copyright and license, at the bottom of the Mug page.
+struct AboutSection: View {
+    private var version: String { Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "dev" }
+
+    var body: some View {
+        Section("About Ember Bar") {
+            LabeledContent("Version", value: version)
+            Text("© 2026 ChesterDesmond. Free to use, change and share under the MIT License. "
+                 + "Not made by or affiliated with Ember Technologies, Inc. Ember is their trademark.")
+                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        }
     }
 }
 
@@ -744,7 +863,7 @@ struct PresetEditor: View {
                 }
             }
             HStack {
-                Toggle("Own mug light color", isOn: Binding(
+                Toggle("Custom light color", isOn: Binding(
                     get: { preset.light != nil },
                     set: { preset.light = $0 ? (mug.homeLight ?? .init(r: 255, g: 140, b: 0)) : nil }))
                 if let light = preset.light {
@@ -812,7 +931,7 @@ struct MugPage: View {
                     get: { (mug.homeLight ?? mug.led)?.color ?? .white },
                     set: { if let c = EmberCodec.RGB($0) { mug.setHomeLight(c) } }), supportsOpacity: false)
                 Toggle("Slow blink while Ember Bar cycles the heater", isOn: $mug.blinkWhileCycling)
-                Text("A program can have its own light color: Programs, Edit. It blinks, 6 seconds bright and 6 dim, whenever Ember Bar is pulsing the heater toward the goal.")
+                Text("A program can have a custom light color: Programs, Edit. It blinks, 6 seconds bright and 6 dim, whenever Ember Bar is pulsing the heater toward the goal.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section("Gentle heating (below \(mug.unit.dual(MugLimits.lowestHeld)))") {
@@ -841,10 +960,13 @@ struct MugPage: View {
                 }
                 if let problem = nameProblem ?? mug.mugProblem { Text(problem).font(.caption).foregroundStyle(.red) }
                 if mug.hasPairedMug {
-                    LabeledContent("This Mac's mug") {
-                        Button("Forget this mug") { mug.forgetMug() }
+                    LabeledContent("Paired mug") {
+                        HStack {
+                            Text(mug.name)
+                            Button("Forget this mug") { mug.forgetMug() }
+                        }
                     }
-                    Text("Forget it to connect a different Ember. The heater is switched off first if Ember Bar was pulsing it.")
+                    Text("The mug this Mac connects to, whether or not it's awake right now. Forget it to connect a different Ember. The heater is switched off first if Ember Bar was pulsing it.")
                         .font(.caption).foregroundStyle(.secondary)
                 } else {
                     NearbyMugsList()
@@ -852,8 +974,9 @@ struct MugPage: View {
                 LabeledContent("Connection", value: mug.link.label)
                 LabeledContent("Battery", value: mug.battery.map { "\($0.percent)%\($0.charging ? ", charging" : "")" } ?? "–")
                 LabeledContent("Liquid level", value: mug.level.map { "\($0) of 30" } ?? "–")
-                LabeledContent("Version", value: mug.firmware ?? "–")
+                LabeledContent("Mug firmware", value: mug.firmware ?? "–")
             }
+            AboutSection()
         }
         .formStyle(.grouped)
         .navigationTitle("Mug")

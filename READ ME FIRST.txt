@@ -37,8 +37,12 @@ Needs a Mac with macOS 14 (Sonoma) or newer and Bluetooth.
 
 3. Use it
 ---------
-- Click a program to use it. Right-click a program to rename, edit or delete it. "+ New program" adds one
-  (a hold at one temperature, or a glide that steps down over time). "Save as program" keeps the slider's setting.
+- Click a program to use it; it lights up orange while it runs. Click it again to go back to what was running
+  before. (With nothing to go back to, say after a restart, the second click turns the heater off, or on for
+  "Just let it cool".) Moving the slider or Turn off ends the program and its orange goes away. Pause turns
+  the orange off until the pause ends and the program comes back.
+- Right-click a program to rename, edit or delete it. "+ New program" adds one (a hold at one temperature, or a
+  glide that steps down over time). "Save as program" keeps the slider's setting.
 - The slider holds any temperature. Its colors: blue is cool, amber at 120°F is where the mug holds by itself,
   red is hot.
 - Below 120°F the mug can't hold a temperature on its own, so Ember Bar turns the heater on in short bursts.
@@ -46,6 +50,11 @@ Needs a Mac with macOS 14 (Sonoma) or newer and Bluetooth.
 - Turn off / Turn on and Pause are near the top. Pause turns the heater off for a while and then goes back to your
   program by itself.
 - Rename your mug with the pencil next to its name (it's saved on the mug, so Ember's app shows it too).
+- Share programs: open the window (the small window icon), Programs, Share > Export programs. Send the file to
+  another Ember Bar user; they use Share > Import programs. Only the programs go in the file, not your mug.
 
 
 If something's off, the app keeps a log at ~/Library/Logs/EmberBar.log.
+
+Ember Bar is free to use, change and share under the MIT License (see LICENSE). It is not made by or affiliated
+with Ember Technologies, Inc. Ember is their trademark.

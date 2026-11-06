@@ -200,6 +200,7 @@ final class MugManager: NSObject, ObservableObject {
 
     private func modeChanged() {
         guard !loading else { return }
+        undoTap = nil
         // Turning the heater off (Off, Pause, "Just let it cool") never moves the pour time, so On picks a glide up
         // where the clock says.
         controller.resetForNewMode(now: Date(), keepCupClock: powerChange || mode == .off)
@@ -213,6 +214,75 @@ final class MugManager: NSObject, ObservableObject {
     func apply(_ preset: Preset) {
         activePresetID = preset.id
         mode = preset.mode
+    }
+
+    /// Everything a program tap changed, so tapping the tile again puts it all back: what was running, what Turn on
+    /// would return to (and any pause), and the glide clock. Any other change to what is running drops it, so it only
+    /// ever undoes the latest tap. Not saved: after a relaunch, tapping the running program turns the heater off.
+    private struct TapUndo {
+        let before: Running
+        let power: PowerMemory
+        let cupClock: Date?
+        /// The cup clock as the tap left it; if it moved since (a refill), the old one no longer applies.
+        let cupClockAfterTap: Date?
+    }
+    private var undoTap: TapUndo?
+
+    /// What clicking the running program's tile will do, for its tooltip.
+    var runningTileClick: String {
+        if undoTap != nil { return "Click again to go back to what was running before." }
+        return isOn ? "Click again to turn the heater off." : "Click again to turn the heater on."
+    }
+
+    /// A tap on a program tile: start it, or, if it is already running, go back to how things were before the tap.
+    func tap(_ preset: Preset) {
+        let now = Running(mode: mode, presetID: activePresetID)
+        guard preset.isRunning(chosen: activePresetID, current: mode) else {
+            let clock = controller.fillStart
+            let saved = power
+            apply(preset)  // clears undoTap via modeChanged
+            undoTap = TapUndo(before: now, power: saved, cupClock: clock, cupClockAfterTap: controller.fillStart)
+            return
+        }
+        guard let undo = undoTap else { isOn ? turnOff() : turnOn(); return }
+        var back = ProgramTap.tap(preset, now: now, before: undo.before, presets: presets).next
+        if controller.fillStart == undo.cupClockAfterTap { controller.restoreCupClock(undo.cupClock) }
+        var restored = undo.power
+        if restored.pausedUntil != nil, !restored.isPaused(now: Date()) {
+            // The tap interrupted a pause that would have ended by now: go back to what the pause was holding.
+            // Same as a pause ending by itself: a program edited meanwhile runs with its new settings.
+            let r = PowerMemory.current(restored.turnOn(), in: presets)
+            back = Running(mode: r.mode, presetID: r.presetID)
+        }
+        power = restored
+        powerChange = true  // keeps the restored clock and Turn on's memory as they were
+        defer { powerChange = false }
+        activePresetID = back.presetID
+        mode = back.mode
+        log("program: undid tap, back to \(modeDescription(mode))")
+    }
+
+    /// Writes every program to `url` for sharing.
+    func exportPrograms(to url: URL) throws {
+        try ProgramFile.encode(presets).write(to: url, options: .atomic)
+    }
+
+    /// Adds the programs in a shared file, skipping ones already saved. Returns a line saying what happened.
+    func importPrograms(from url: URL) -> String {
+        guard let data = try? Data(contentsOf: url) else { return "Couldn't open \(url.lastPathComponent)." }
+        do {
+            let r = ProgramFile.merge(try ProgramFile.decode(data), into: presets)
+            presets = r.programs
+            if r.added == 0 { return r.skipped == 1 ? "You already have that program." : "You already have all \(r.skipped) of those programs." }
+            let added = r.added == 1 ? "Added 1 program" : "Added \(r.added) programs"
+            return r.skipped == 0 ? added + "." : added + ", skipped \(r.skipped) you already have."
+        } catch ProgramFile.Problem.newerVersion {
+            return "That file is from a newer Ember Bar. Update Ember Bar, then import it again."
+        } catch ProgramFile.Problem.noPrograms {
+            return "That file has no programs in it."
+        } catch {
+            return "That isn't an Ember Bar programs file."
+        }
     }
 
     // MARK: Power: on, off, pause
@@ -289,6 +359,7 @@ final class MugManager: NSObject, ObservableObject {
     func addProgram(name: String, mode newMode: Mode) {
         let p = Preset(name: Preset.cleanName(name) ?? "My program", mode: newMode)
         presets.append(p)
+        undoTap = nil  // a new tile may now be the running one; its click shouldn't undo an older tap
         if newMode == mode {
             activePresetID = p.id
             power.chose(mode, presetID: p.id)
@@ -304,6 +375,7 @@ final class MugManager: NSObject, ObservableObject {
     /// and goes back to the everyday light color.
     func deleteProgram(_ id: UUID) {
         presets.removeAll { $0.id == id }
+        undoTap = nil
         if activePresetID == id { activePresetID = nil }
         updateLight()
     }

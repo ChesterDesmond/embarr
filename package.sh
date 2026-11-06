@@ -28,7 +28,7 @@ lipo -create .build-arm64/release/EmberBar .build-x86/release/EmberBar -output d
 STAGE="dist/stage/Ember Bar $VERSION"
 rm -rf "$STAGE"; mkdir -p "$STAGE"
 scripts/bundle.sh dist/EmberBar-universal "$STAGE"
-cp "READ ME FIRST.txt" "$STAGE/"
+cp "READ ME FIRST.txt" LICENSE "$STAGE/"
 ZIP="dist/Ember-Bar-$VERSION.zip"
 rm -f "$ZIP"
 # No resource forks or extended attributes: some unzip tools leave them as ._ files inside the app, which breaks

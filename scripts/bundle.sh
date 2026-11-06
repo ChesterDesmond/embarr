@@ -33,6 +33,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleVersion</key><string>$(date +%Y%m%d%H%M)</string>
   <key>LSMinimumSystemVersion</key><string>14.0</string>
   <key>LSUIElement</key><true/>
+  <key>NSHumanReadableCopyright</key><string>© 2026 ChesterDesmond. MIT License. Not affiliated with Ember Technologies, Inc.</string>
   <key>NSBluetoothAlwaysUsageDescription</key><string>Ember Bar talks to your Ember mug over Bluetooth.</string>
 </dict></plist>
 PLIST

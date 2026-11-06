@@ -6,8 +6,11 @@ A menu-bar app for Ember mugs (built on Chester's Ember Cup 2), replacing Ember'
   heating or holding, blue cooling down to the goal, purple resting between pulses, teal heater off; it breathes
   while heating or cooling). Click for programs, a hold slider and a 20-minute chart.
 - **Programs:** "+ New program" in the popover (a hold or a glide; the editor also offers heater off); right-click a program to rename, edit
-  or delete it; "Save as program" keeps the slider's hold. The slider is color-coded: blue cool, amber at 120 °F
-  (the mark: the mug holds that and above by itself), red hot.
+  or delete it; "Save as program" keeps the slider's hold. Clicking the running program again undoes that click
+  (what was running, Turn on's memory, any pause, the glide clock); with nothing to undo it toggles the heater. The
+  window's Programs page has Share > Export / Import programs (a JSON file of the programs only, read by
+  `ProgramFile`). The slider is color-coded: blue cool, amber at 120 °F (the mark: the mug holds that and above by
+  itself), red hot.
 - **Choosing a mug:** with no mug yet, the popover lists "Mugs nearby" with Connect. Mug page > Forget this mug picks
   another. Rename the mug from the pencil in the popover or the Mug page (stored on the mug; up to 14 characters).
 - **On / Off / Pause** (popover and window): Turn off turns the heater off, Turn on goes back to the last program (a glide
@@ -41,3 +44,8 @@ Log: `~/Library/Logs/EmberBar.log`. One-off CLI: `./set-temp.sh 50`.
 
 Only one device can talk to the mug at a time: quit Ember's app (Mac or phone) or Ember Bar can't connect.
 Protocol notes are in `Sources/EmberCore/Protocol.swift`.
+
+## License
+
+MIT, © 2026 ChesterDesmond: see `LICENSE`. Not made by or affiliated with Ember Technologies, Inc.; Ember is their
+trademark.

@@ -198,6 +198,10 @@ public struct HeaterController: Codable, Equatable, Sendable {
         if hadLiquid && !keepCupClock { fillStart = now }
     }
 
+    /// Undoing a program tap: put the cup clock back where it was, so a glide resumes at its step instead of
+    /// starting over.
+    public mutating func restoreCupClock(_ start: Date?) { fillStart = start }
+
     public func goal(for mode: Mode, now: Date) -> Double? {
         switch mode {
         case .off: return nil
