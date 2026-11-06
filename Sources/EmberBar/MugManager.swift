@@ -183,9 +183,11 @@ final class MugManager: NSObject, ObservableObject {
         put(power, "power")
     }
 
-    var activePreset: Preset? {
-        presets.first { $0.id == activePresetID && $0.mode == mode }
-    }
+    var activePreset: Preset? { presets.first(where: isRunning) }
+
+    /// Whether `p` is the program the mug is running: it drives the tile highlight, the Programs page's "Running"
+    /// label and, through `activePreset`, the mug's light.
+    func isRunning(_ p: Preset) -> Bool { p.isRunning(chosen: activePresetID, current: mode) }
 
     var phase: HeaterPhase {
         HeaterPhase(connected: link == .connected, state: state, temp: temp, goal: goal, pulsing: pulsing)

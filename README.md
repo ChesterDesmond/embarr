@@ -34,7 +34,7 @@ Intel, macOS 14+, with `READ ME FIRST.txt` for the recipient); `package.sh --rel
 the private GitHub repo. It is signed ad hoc, not notarized, so the recipient clicks "Open Anyway" once per version (and macOS may ask
 for Bluetooth permission again after an update, since each ad-hoc build counts as a new app).
 Check the layout without clicking the menu bar: `EMBERBAR_SNAPSHOT=/tmp/snap "build/Ember Bar.app/Contents/MacOS/EmberBar"`
-writes PNGs of the popover and window pages (it never touches the mug).
+writes PNGs of the popover, the window pages and a highlighted button (it never touches the mug).
 Tests: `./test.sh` (plain `swift test` can't find swift-testing's macro plugin with only
 Command Line Tools installed; see ~/.claude/papercuts.md).
 Log: `~/Library/Logs/EmberBar.log`. One-off CLI: `./set-temp.sh 50`.

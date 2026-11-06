@@ -16,7 +16,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 }
 
 /// Development aid: `EMBERBAR_SNAPSHOT=<folder> "/Applications/Ember Bar.app/Contents/MacOS/EmberBar"` draws the
-/// popover and the window's pages to PNGs and exits, so the layout can be checked without clicking the menu bar.
+/// popover, the window's pages and a highlighted button (highlight.png) to PNGs and exits, so the layout can be
+/// checked without clicking the menu bar.
 /// Nothing in a snapshot run touches Bluetooth: every MugManager in it is made with `live: false`, so it shows the
 /// saved programs and settings with no readings.
 @MainActor
@@ -32,6 +33,13 @@ enum Snapshot {
                 mug.windowPage = page
                 write(MainWindow().environmentObject(mug), size: NSSize(width: 860, height: 640), to: dir.appendingPathComponent(file))
             }
+            // A highlighted and a plain button side by side, since the saved settings may have nothing running.
+            let pair = HStack {
+                ForEach([true, false], id: \.self) { on in
+                    Button {} label: { Text(on ? "Running" : "Not running").frame(maxWidth: .infinity) }.highlighted(on)
+                }
+            }
+            write(pair.padding().frame(width: 300), size: NSSize(width: 300, height: 60), to: dir.appendingPathComponent("highlight.png"))
             write(PresetEditor(preset: Preset(name: "New program", mode: .hold(40)), save: { _ in }, cancel: {}).environmentObject(mug),
                   size: NSSize(width: 440, height: 360), to: dir.appendingPathComponent("editor.png"))
             exit(0)
@@ -52,6 +60,28 @@ enum Snapshot {
         try? rep.representation(using: .png, properties: [:])?.write(to: url)
         window.orderOut(nil)
     }
+}
+
+/// A bordered button that shows it is the current choice (the running program): an orange outline and wash, drawn
+/// by hand over the bezel. macOS draws a `.bordered` button the same whatever its tint, and grays a
+/// `.borderedProminent` one whenever its window isn't frontmost, so neither showed it.
+struct Highlighted: ViewModifier {
+    let on: Bool
+    func body(content: Content) -> some View {
+        let shape = RoundedRectangle(cornerRadius: 6, style: .continuous)
+        content
+            .buttonStyle(.bordered)
+            .overlay {
+                shape.fill(Color.orange.opacity(on ? 0.25 : 0))
+                    .overlay(shape.strokeBorder(Color.orange, lineWidth: on ? 2 : 0))
+                    .allowsHitTesting(false)
+            }
+            .accessibilityAddTraits(on ? .isSelected : [])
+    }
+}
+
+extension View {
+    func highlighted(_ on: Bool) -> some View { modifier(Highlighted(on: on)) }
 }
 
 @main
@@ -302,10 +332,11 @@ struct PowerRow: View {
                 }
             } else {
                 Button { mug.isOn ? mug.turnOff() : mug.turnOn() } label: {
-                    Label(mug.isOn ? "Turn off" : "Turn on", systemImage: "power")
+                    Label { Text(mug.isOn ? "Turn off" : "Turn on") } icon: {
+                        Image(systemName: "power").foregroundStyle(mug.isOn ? Color.orange : Color.primary)
+                    }
                 }
                 .buttonStyle(.bordered)
-                .tint(mug.isOn ? .orange : nil)
                 .help(mug.isOn ? "Heater on. Click to turn it off." : "Heater off. Click to go back to your last program.")
                 Menu {
                     Button("15 minutes") { mug.pause(minutes: 15) }
@@ -465,8 +496,7 @@ struct CompactView: View {
                         }
                         .frame(maxWidth: .infinity)
                     }
-                    .buttonStyle(.bordered)
-                    .tint(mug.activePresetID == p.id && mug.mode == p.mode ? .orange : nil)
+                    .highlighted(mug.isRunning(p))
                     .help([mug.modeDescription(p.mode), mug.averageNote(p.mode)].compactMap { $0 }.joined(separator: "\n"))
                     .contextMenu {
                         Button("Rename…") { startNaming(.program(p.id), p.name) }
@@ -597,8 +627,7 @@ struct NowPage: View {
                             }
                                 .frame(maxWidth: .infinity, minHeight: 44)
                         }
-                        .buttonStyle(.bordered)
-                        .tint(mug.activePresetID == p.id && mug.mode == p.mode ? .orange : nil)
+                        .highlighted(mug.isRunning(p))
                     }
                 }
             }
@@ -625,6 +654,9 @@ struct PresetsPage: View {
                             if let avg = mug.averageNote(p.mode) { Text(avg).font(.caption).foregroundStyle(.secondary) }
                         }
                         Spacer()
+                        if mug.isRunning(p) {
+                            Label("Running", systemImage: "checkmark.circle.fill").foregroundStyle(.orange).font(.caption)
+                        }
                         Button("Use") { mug.apply(p) }
                         Button("Edit") { editing = p }
                         Button(role: .destructive) { mug.deleteProgram(p.id) } label: { Image(systemName: "trash") }

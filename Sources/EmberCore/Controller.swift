@@ -45,6 +45,10 @@ public struct Preset: Codable, Equatable, Hashable, Identifiable, Sendable {
         self.id = id; self.name = name; self.mode = mode; self.light = light
     }
 
+    /// Whether the mug is running this program: it was the last one chosen (`chosen`) and the mug's settings
+    /// (`current`) still match it. Moving the slider, Turn off and Pause all change the settings, so it stops.
+    public func isRunning(chosen: UUID?, current: Mode) -> Bool { id == chosen && mode == current }
+
     /// A program name as typed, trimmed; nil when nothing is left.
     public static func cleanName(_ name: String) -> String? {
         let t = name.trimmingCharacters(in: .whitespacesAndNewlines)
