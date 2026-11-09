@@ -5,3 +5,4 @@ build/
 .build-arm64/
 dist/
 dist-test.log
+.DS_Store
