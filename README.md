@@ -8,14 +8,21 @@ programs-file format), so settings, the paired mug and the Bluetooth permission 
 - **Menu bar:** coffee temperature with the goal under it, on a cup tinted by what the heater is doing (orange
   heating or holding, blue cooling down to the goal, purple resting between pulses, teal heater off; it breathes
   while heating or cooling). Click for programs, a hold slider and a 20-minute chart.
+- **Right-click** (or Control-click) the menu-bar icon for a menu: the mug's status and battery, Open Embarr,
+  Settings…, heater on/off, Pause, Programs, Reconnect, Open at Login, About and Quit. The popover's "…" button has
+  the app-level ones. SwiftUI's MenuBarExtra has no right-click, so `StatusMenu` catches it with a local event
+  monitor on the status item's window.
+- **Battery** is drawn in green (50% and up, or charging), yellow (21–49%) or red (20% and below), with the icon's
+  fill following the charge (`BatteryLook.swift`).
+- **Open at Login** (Settings, or either menu) uses macOS's own Login Items list (`SMAppService`).
 - **Programs:** "+ New program" in the popover (a hold or a glide; the editor also offers heater off); right-click a program to rename, edit
   or delete it; "Save as program" keeps the slider's hold. Clicking the running program again undoes that click
   (what was running, Turn on's memory, any pause, the glide clock); with nothing to undo it toggles the heater. The
   window's Programs page has Share > Export / Import programs (a JSON file of the programs only, read by
   `ProgramFile`). The slider is color-coded: blue cool, amber at 120 °F (the mark: the mug holds that and above by
   itself), red hot.
-- **Choosing a mug:** with no mug yet, the popover lists "Mugs nearby" with Connect. Mug page > Forget this mug picks
-  another. Rename the mug from the pencil in the popover or the Mug page (stored on the mug; up to 14 characters).
+- **Choosing a mug:** with no mug yet, the popover lists "Mugs nearby" with Connect. Settings > Forget this mug picks
+  another. Rename the mug from the pencil in the popover or the Settings page (stored on the mug; up to 14 characters).
 - **On / Off / Pause** (popover and window): Turn off turns the heater off, Turn on goes back to the last program (a glide
   carries on where its clock says), Pause turns it off for 15 min, 30 min or an hour and then comes back by itself.
   While paused, Stay off ends the pause and keeps the heater off, and Resume goes back now.

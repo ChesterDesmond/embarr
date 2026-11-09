@@ -41,6 +41,13 @@ enum Snapshot {
                 }
             }
             write(pair.padding().frame(width: 300), size: NSSize(width: 300, height: 60), to: dir.appendingPathComponent("highlight.png"))
+            let batteries = HStack(spacing: 14) {
+                ForEach([(100, false), (70, false), (40, false), (12, false), (30, true)], id: \.0) {
+                    BatteryBadge(battery: .init(percent: $0.0, charging: $0.1))
+                }
+            }
+            write(VStack(alignment: .leading, spacing: 10) { Wordmark(size: 20); batteries }.padding().frame(width: 320, alignment: .leading),
+                  size: NSSize(width: 320, height: 110), to: dir.appendingPathComponent("header-battery.png"))
             write(PresetEditor(preset: Preset(name: "New program", mode: .hold(40)), save: { _ in }, cancel: {}).environmentObject(mug),
                   size: NSSize(width: 440, height: 360), to: dir.appendingPathComponent("editor.png"))
             exit(0)
@@ -113,6 +120,7 @@ struct EmberBarApp: App {
 struct MenuLabel: View {
     @ObservedObject var mug: MugManager
     @ObservedObject var clock: IconClock
+    @Environment(\.openWindow) private var openWindow
     var body: some View {
         let phase = mug.phase
         let showTemps = phase != .unavailable
@@ -120,6 +128,10 @@ struct MenuLabel: View {
                                         temp: showTemps ? mug.unit.format(mug.temp) : nil,
                                         goal: showTemps ? mug.goal.map { "→" + mug.unit.format($0) } : nil,
                                         frame: clock.frame))
+            .onAppear {
+                AppActions.openWindow = openWindow
+                if !Snapshot.requested { StatusMenu.shared.install(mug: mug) }
+            }
     }
 }
 
@@ -441,6 +453,17 @@ struct CompactView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .top) {
+                    Wordmark()
+                    Spacer()
+                    Button { AppActions.open(mug: mug) } label: { Image(systemName: "macwindow") }
+                        .buttonStyle(.borderless).help("Open Embarr")
+                    AppMenuButton()
+                }
+                EmberRule()
+            }
+
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 4) {
@@ -453,13 +476,9 @@ struct CompactView: View {
                     Text(mug.link.label).font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
+                if let b = mug.battery { BatteryBadge(battery: b).font(.caption) }
                 Button { mug.reconnect() } label: { Image(systemName: "arrow.clockwise") }
                     .buttonStyle(.borderless).help("Reconnect")
-                Button {
-                    openWindow(id: "main")
-                    NSApp.activate(ignoringOtherApps: true)
-                } label: { Image(systemName: "macwindow") }
-                    .buttonStyle(.borderless).help("Open Embarr")
             }
 
             HStack(alignment: .firstTextBaseline) {
@@ -475,7 +494,7 @@ struct CompactView: View {
             if mug.link.bluetoothUnavailable { BluetoothHint() }
             else if !mug.hasPairedMug { NearbyMugsList() }
             else if mug.mugMissing {
-                Text("Not finding your mug? Wake it, and quit Ember's app on your phone. Still nothing: open the window, Mug, Forget this mug, and connect it again.")
+                Text("Not finding your mug? Wake it, and quit Ember's app on your phone. Still nothing: open Settings, Forget this mug, and connect it again.")
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
 
@@ -535,11 +554,6 @@ struct CompactView: View {
                 }
                 .font(.caption).foregroundStyle(.secondary)
                 Spacer()
-                if let b = mug.battery {
-                    Label("\(b.percent)%", systemImage: b.charging ? "battery.100.bolt" : "battery.75")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-                Button("Quit") { NSApp.terminate(nil) }.buttonStyle(.borderless).font(.caption)
             }
         }
         .padding(14)
@@ -557,7 +571,7 @@ struct MainWindow: View {
             List(selection: Binding<WindowPage?>(get: { mug.windowPage }, set: { if let p = $0 { mug.windowPage = p } })) {
                 Label("Now", systemImage: "cup.and.saucer").tag(WindowPage.now)
                 Label("Programs", systemImage: "list.bullet").tag(WindowPage.programs)
-                Label("Mug", systemImage: "gearshape").tag(WindowPage.mug)
+                Label("Settings", systemImage: "gearshape").tag(WindowPage.mug)
             }
         } detail: {
             switch mug.windowPage {
@@ -914,6 +928,8 @@ struct GlideStepRow: View {
 
 struct MugPage: View {
     @EnvironmentObject var mug: MugManager
+    private let _loginOn = State<Bool>(initialValue: false)
+    private var loginOn: Bool { get { _loginOn.wrappedValue } nonmutating set { _loginOn.wrappedValue = newValue } }
     private let _draftName = State<String>(initialValue: "")
     private var draftName: String { get { _draftName.wrappedValue } nonmutating set { _draftName.wrappedValue = newValue } }
     private let _nameProblem = State<String?>(initialValue: nil)
@@ -921,10 +937,15 @@ struct MugPage: View {
 
     var body: some View {
         Form {
-            Section("Display") {
+            Section("General") {
                 Picker("Units", selection: $mug.unit) {
                     Text("°F").tag(TempUnit.fahrenheit); Text("°C").tag(TempUnit.celsius)
                 }.pickerStyle(.segmented)
+                Toggle("Open at Login", isOn: Binding(get: { loginOn }, set: {
+                    nameProblem = LoginItem.set($0)
+                    loginOn = LoginItem.isOn
+                }))
+                .onAppear { loginOn = LoginItem.isOn }
             }
             Section("Light") {
                 ColorPicker("Everyday mug light", selection: Binding(
@@ -972,14 +993,18 @@ struct MugPage: View {
                     NearbyMugsList()
                 }
                 LabeledContent("Connection", value: mug.link.label)
-                LabeledContent("Battery", value: mug.battery.map { "\($0.percent)%\($0.charging ? ", charging" : "")" } ?? "–")
+                LabeledContent("Battery") {
+                    if let b = mug.battery {
+                        HStack(spacing: 4) { BatteryBadge(battery: b); if b.charging { Text("charging") } }
+                    } else { Text("–") }
+                }
                 LabeledContent("Liquid level", value: mug.level.map { "\($0) of 30" } ?? "–")
                 LabeledContent("Mug firmware", value: mug.firmware ?? "–")
             }
             AboutSection()
         }
         .formStyle(.grouped)
-        .navigationTitle("Mug")
+        .navigationTitle("Settings")
     }
 }
 

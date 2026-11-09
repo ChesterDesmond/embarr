@@ -78,6 +78,7 @@ public enum EmberCodec {
     public struct Battery: Equatable, Sendable {
         public var percent: Int
         public var charging: Bool
+        public init(percent: Int, charging: Bool) { self.percent = percent; self.charging = charging }
     }
 
     public static func decodeBattery(_ data: Data) -> Battery? {
