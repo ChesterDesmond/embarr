@@ -28,10 +28,11 @@ public enum ProgramTap {
     }
 }
 
-/// Programs saved to a file to share with another Ember Bar user. The file holds the programs only, never which
+/// Programs saved to a file to share with another Embarr user. The file holds the programs only, never which
 /// mug this Mac is paired with or how it has learned to heat. Its layout is spelled out here rather than derived from
 /// `Mode`, so a file already sent keeps importing however `Mode` changes later.
 public struct ProgramFile: Codable, Equatable, Sendable {
+    // Kept from before the rename to Embarr, so files already shared still import.
     public static let format = "Ember Bar programs"
     public static let currentVersion = 1
 

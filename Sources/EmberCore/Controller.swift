@@ -24,7 +24,7 @@ public enum Mode: Codable, Equatable, Hashable, Sendable {
         }
     }
 
-    /// True when Ember Bar cycles the heater for at least part of this mode: a hold below what the mug holds by
+    /// True when Embarr cycles the heater for at least part of this mode: a hold below what the mug holds by
     /// itself, or a glide with any such step.
     public var isCycling: Bool {
         switch self {
@@ -109,7 +109,7 @@ public struct HeaterController: Codable, Equatable, Sendable {
     public var maxOnDuration: TimeInterval = 8
     /// How long after a pour the sensor needs to catch up (it read 32.78 C as hot coffee went in).
     public static let settleAfterFill: TimeInterval = 60
-    /// A cup found after Ember Bar was out of touch (quit, or out of range) for longer than this, at least
+    /// A cup found after Embarr was out of touch (quit, or out of range) for longer than this, at least
     /// `refillRise` hotter than the last settled reading, and hotter than the mug's own heater ever takes it
     /// (`lowestHeld` + `refillRise`), is a new cup: emptied and refilled meanwhile. A cup that only cooled while the
     /// lid was closed, or was warmed by a burst still running when the link dropped, is still the same cup.
@@ -132,7 +132,7 @@ public struct HeaterController: Codable, Equatable, Sendable {
     /// Set when loaded from disk or after the Bluetooth link drops: the first reading after the gap decides whether
     /// the cup in the mug is still the one poured at `fillStart`.
     var restored = false
-    /// When the last real reading came in, and what it was; saved, so a relaunch can tell how long Ember Bar was
+    /// When the last real reading came in, and what it was; saved, so a relaunch can tell how long Embarr was
     /// away and whether the coffee was replaced meanwhile.
     var lastSeen: Date?
     var lastTemp: Double?
@@ -153,7 +153,7 @@ public struct HeaterController: Codable, Equatable, Sendable {
 
     // Saved: what the user set (band), what was learned (overshoot), and when the current cup was poured so a
     // relaunch mid-cup doesn't restart a glide, plus the last reading (time and value) to spot a refill made
-    // while Ember Bar was away. The timing values (minOnInterval, learnWindow, maxOnDuration) are not saved, so
+    // while Embarr was away. The timing values (minOnInterval, learnWindow, maxOnDuration) are not saved, so
     // a new build's defaults always apply; they stay vars only so tests can set them. Every key is optional: a missing one never wipes the rest (synthesized Codable throws
     // on any missing key, and the caller then falls back to defaults).
     enum CodingKeys: String, CodingKey { case band, overshoot, tuning, fillStart, hadLiquid, lastSeen, lastTemp }
@@ -225,7 +225,7 @@ public struct HeaterController: Codable, Equatable, Sendable {
         }
         let temp = temp!
 
-        // Only on the first settled reading after a relaunch or reconnect, judged by how long Ember Bar was away (not
+        // Only on the first settled reading after a relaunch or reconnect, judged by how long Embarr was away (not
         // by the cup's age) and by whether the coffee came back hot: see `awayForNewCup`.
         // Mid-pour the sensor still reads low (32.78 C as hot coffee went in), so hold the decision until it's done.
         var staleCup = false
@@ -381,7 +381,7 @@ public enum HeaterPhase: Equatable, Sendable {
     }
 }
 
-/// The mug's light: a preset's own color, slowly blinking (full, then dim) while Ember Bar cycles the heater.
+/// The mug's light: a preset's own color, slowly blinking (full, then dim) while Embarr cycles the heater.
 public enum MugLight {
     public static let dimFraction = 0.15
 

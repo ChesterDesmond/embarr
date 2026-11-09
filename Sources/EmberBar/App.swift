@@ -16,7 +16,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
-/// Development aid: `EMBERBAR_SNAPSHOT=<folder> "/Applications/Ember Bar.app/Contents/MacOS/EmberBar"` draws the
+/// Development aid: `EMBERBAR_SNAPSHOT=<folder> "/Applications/Embarr.app/Contents/MacOS/EmberBar"` draws the
 /// popover, the window's pages and a highlighted button (highlight.png) to PNGs and exits, so the layout can be
 /// checked without clicking the menu bar.
 /// Nothing in a snapshot run touches Bluetooth: every MugManager in it is made with `live: false`, so it shows the
@@ -101,7 +101,7 @@ struct EmberBarApp: App {
         }
         .menuBarExtraStyle(.window)
 
-        Window("Ember Bar", id: "main") {
+        Window("Embarr", id: "main") {
             MainWindow()
                 .environmentObject(mug)
                 .frame(minWidth: 720, minHeight: 560)
@@ -207,7 +207,7 @@ extension MugManager {
 
     func pulsedSuffix(_ mode: Mode) -> String { mode.isCycling ? ", pulsed" : "" }
 
-    /// "≈ 112°F / 44°C avg" for modes Ember Bar cycles (the coffee swings, so the target alone misleads).
+    /// "≈ 112°F / 44°C avg" for modes Embarr cycles (the coffee swings, so the target alone misleads).
     func averageNote(_ mode: Mode) -> String? {
         guard mode.isCycling, let a = controller.approxAverage(mode) else { return nil }
         if case .glide = mode { return "≈ \(unit.dual(a)) avg over a 30-min cup" }
@@ -239,7 +239,7 @@ extension TempColor {
 }
 
 /// The temperature slider, color-coded: its track runs blue (cool) through amber at 120 F (where the mug holds by
-/// itself; below it Ember Bar pulses the heater) to red, and the thumb takes the color of the value. Drawn by hand
+/// itself; below it Embarr pulses the heater) to red, and the thumb takes the color of the value. Drawn by hand
 /// because macOS sliders ignore tint. Drag or click anywhere on it; arrow keys and VoiceOver step it.
 struct TempSlider: View {
     @EnvironmentObject var mug: MugManager
@@ -313,7 +313,7 @@ struct TempSlider: View {
         .accessibilityLabel("Temperature")
         .accessibilityValue(mug.unit.dual(celsius))
         .accessibilityAdjustableAction { nudge($0 == .increment ? 1 : -1) }
-        .help("Blue is cool, red is hot. The mark is \(mug.unit.dual(MugLimits.lowestHeld)): the mug holds that and above by itself; below it Ember Bar pulses the heater.")
+        .help("Blue is cool, red is hot. The mark is \(mug.unit.dual(MugLimits.lowestHeld)): the mug holds that and above by itself; below it Embarr pulses the heater.")
     }
 }
 
@@ -459,7 +459,7 @@ struct CompactView: View {
                     openWindow(id: "main")
                     NSApp.activate(ignoringOtherApps: true)
                 } label: { Image(systemName: "macwindow") }
-                    .buttonStyle(.borderless).help("Open Ember Bar")
+                    .buttonStyle(.borderless).help("Open Embarr")
             }
 
             HStack(alignment: .firstTextBaseline) {
@@ -589,7 +589,7 @@ struct NowPage: View {
                         if let t = mug.mugTarget {
                             Text("Mug's heater setting right now: \(t == 0 ? "off" : mug.unit.format(t))")
                                 .font(.caption).foregroundStyle(.secondary)
-                                .help("What the mug itself is set to, read from it every few seconds. Ember Bar normally sets it, so it matches your goal from \(mug.unit.dual(MugLimits.lowestHeld)) up. Below that, Ember Bar switches the heater on and off in short bursts, so this flips between \(mug.unit.format(MugLimits.pulseOn)) and off.")
+                                .help("What the mug itself is set to, read from it every few seconds. Embarr normally sets it, so it matches your goal from \(mug.unit.dual(MugLimits.lowestHeld)) up. Below that, Embarr switches the heater on and off in short bursts, so this flips between \(mug.unit.format(MugLimits.pulseOn)) and off.")
                         }
                     }
                 }
@@ -702,17 +702,17 @@ struct PresetsPage: View {
     private let _shareNote = State<String?>(initialValue: nil)
     private var shareNote: String? { get { _shareNote.wrappedValue } nonmutating set { _shareNote.wrappedValue = newValue } }
 
-    /// Saves every program to a file another Ember Bar user can import. Only the programs: not the paired mug.
+    /// Saves every program to a file another Embarr user can import. Only the programs: not the paired mug.
     private func exportPrograms() {
         let panel = NSSavePanel()
-        panel.nameFieldStringValue = "Ember Bar programs.json"
+        panel.nameFieldStringValue = "Embarr programs.json"
         panel.allowedContentTypes = [.json]
         NSApp.activate(ignoringOtherApps: true)
         guard panel.runModal() == .OK, let url = panel.url else { return }
         do {
             try mug.exportPrograms(to: url)
             let n = mug.presets.count == 1 ? "1 program" : "\(mug.presets.count) programs"
-            shareNote = "Saved \(n) to \(url.lastPathComponent). Send that file to someone with Ember Bar; they use Share, Import programs."
+            shareNote = "Saved \(n) to \(url.lastPathComponent). Send that file to someone with Embarr; they use Share, Import programs."
         } catch {
             shareNote = "Couldn't save: \(error.localizedDescription)"
         }
@@ -753,13 +753,13 @@ struct ModeGuide: View {
                   sketch: [.init(x: 0, y: 0.08), .init(x: 0.25, y: 0.45), .init(x: 0.35, y: 0.5), .init(x: 1, y: 0.5)],
                   tint: TempColor.color(55)),
             Entry(title: "Hold, below \(floor)",
-                  text: "The mug won't hold this low, so Ember Bar switches the heater on in short bursts. The Mac has to be on and near the mug. The coffee swings a little around the goal, so these programs show an average.",
+                  text: "The mug won't hold this low, so Embarr switches the heater on in short bursts. The Mac has to be on and near the mug. The coffee swings a little around the goal, so these programs show an average.",
                   sketch: [.init(x: 0, y: 0.08), .init(x: 0.3, y: 0.62), .init(x: 0.4, y: 0.72), .init(x: 0.47, y: 0.62),
                            .init(x: 0.6, y: 0.72), .init(x: 0.67, y: 0.62), .init(x: 0.8, y: 0.72), .init(x: 0.87, y: 0.62),
                            .init(x: 1, y: 0.72)],
                   tint: TempColor.color(42)),
             Entry(title: "Glide",
-                  text: "Steps the goal down over time, counted from when you pour, for coffee that tastes different as it cools. Ember Bar changes each step, so keep the Mac near the mug.",
+                  text: "Steps the goal down over time, counted from when you pour, for coffee that tastes different as it cools. Embarr changes each step, so keep the Mac near the mug.",
                   sketch: [.init(x: 0, y: 0.08), .init(x: 0.15, y: 0.3), .init(x: 0.4, y: 0.3), .init(x: 0.48, y: 0.5),
                            .init(x: 0.7, y: 0.5), .init(x: 0.78, y: 0.7), .init(x: 1, y: 0.7)],
                   tint: TempColor.color(48)),
@@ -805,7 +805,7 @@ struct AboutSection: View {
     private var version: String { Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "dev" }
 
     var body: some View {
-        Section("About Ember Bar") {
+        Section("About Embarr") {
             LabeledContent("Version", value: version)
             Text("© 2026 ChesterDesmond. Free to use, change and share under the MIT License. "
                  + "Not made by or affiliated with Ember Technologies, Inc. Ember is their trademark.")
@@ -930,8 +930,8 @@ struct MugPage: View {
                 ColorPicker("Everyday mug light", selection: Binding(
                     get: { (mug.homeLight ?? mug.led)?.color ?? .white },
                     set: { if let c = EmberCodec.RGB($0) { mug.setHomeLight(c) } }), supportsOpacity: false)
-                Toggle("Slow blink while Ember Bar cycles the heater", isOn: $mug.blinkWhileCycling)
-                Text("A program can have a custom light color: Programs, Edit. It blinks, 6 seconds bright and 6 dim, whenever Ember Bar is pulsing the heater toward the goal.")
+                Toggle("Slow blink while Embarr cycles the heater", isOn: $mug.blinkWhileCycling)
+                Text("A program can have a custom light color: Programs, Edit. It blinks, 6 seconds bright and 6 dim, whenever Embarr is pulsing the heater toward the goal.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section("Gentle heating (below \(mug.unit.dual(MugLimits.lowestHeld)))") {
@@ -945,7 +945,7 @@ struct MugPage: View {
                         Button("Reset") { mug.resetLearning() }
                     }
                 }
-                Text("After each burst the coffee keeps warming a little. Ember Bar measures how much and cuts the heater that much earlier next time.")
+                Text("After each burst the coffee keeps warming a little. Embarr measures how much and cuts the heater that much earlier next time.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section("Mug") {
@@ -966,7 +966,7 @@ struct MugPage: View {
                             Button("Forget this mug") { mug.forgetMug() }
                         }
                     }
-                    Text("The mug this Mac connects to, whether or not it's awake right now. Forget it to connect a different Ember. The heater is switched off first if Ember Bar was pulsing it.")
+                    Text("The mug this Mac connects to, whether or not it's awake right now. Forget it to connect a different Ember. The heater is switched off first if Embarr was pulsing it.")
                         .font(.caption).foregroundStyle(.secondary)
                 } else {
                     NearbyMugsList()
@@ -1020,14 +1020,14 @@ final class PendingCommit {
     func cancel() { item?.cancel(); item = nil }
 }
 
-/// What to do when Bluetooth can't be used: turn it on, or allow Ember Bar in System Settings.
+/// What to do when Bluetooth can't be used: turn it on, or allow Embarr in System Settings.
 struct BluetoothHint: View {
     @EnvironmentObject var mug: MugManager
 
     var body: some View {
         if mug.link == .bluetoothDenied {
             VStack(alignment: .leading, spacing: 4) {
-                Text("Ember Bar needs Bluetooth to reach the mug. Turn it on for Ember Bar in System Settings > Privacy & Security > Bluetooth.")
+                Text("Embarr needs Bluetooth to reach the mug. Turn it on for Embarr in System Settings > Privacy & Security > Bluetooth.")
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 Button("Open Bluetooth settings") {
                     if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Bluetooth") {

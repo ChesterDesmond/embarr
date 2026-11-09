@@ -1,5 +1,5 @@
 #!/bin/bash
-# Build a copy of Ember Bar to give to someone else: one app that runs on Apple silicon and Intel Macs (macOS 14+),
+# Build a copy of Embarr to give to someone else: one app that runs on Apple silicon and Intel Macs (macOS 14+),
 # zipped with READ ME FIRST.txt. Output: dist/Ember-Bar-<version>.zip
 # Optional: package.sh --release   also uploads the zip as a GitHub release on the private repo.
 set -euo pipefail
@@ -25,11 +25,11 @@ swift build -c release --triple arm64-apple-macosx14.0 --scratch-path .build-arm
 swift build -c release --triple x86_64-apple-macosx14.0 --scratch-path .build-x86
 mkdir -p dist/stage
 lipo -create .build-arm64/release/EmberBar .build-x86/release/EmberBar -output dist/EmberBar-universal
-STAGE="dist/stage/Ember Bar $VERSION"
+STAGE="dist/stage/Embarr $VERSION"
 rm -rf "$STAGE"; mkdir -p "$STAGE"
 scripts/bundle.sh dist/EmberBar-universal "$STAGE"
 cp "READ ME FIRST.txt" LICENSE "$STAGE/"
-ZIP="dist/Ember-Bar-$VERSION.zip"
+ZIP="dist/Embarr-$VERSION.zip"
 rm -f "$ZIP"
 # No resource forks or extended attributes: some unzip tools leave them as ._ files inside the app, which breaks
 # its signature.
@@ -45,7 +45,7 @@ if [ "${1:-}" = "--release" ]; then
   if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
     gh release upload "$TAG" "$ZIP" --repo "$REPO" --clobber
   else
-    gh release create "$TAG" "$ZIP" --repo "$REPO" --target "$(git rev-parse HEAD)" --title "Ember Bar $VERSION" \
+    gh release create "$TAG" "$ZIP" --repo "$REPO" --target "$(git rev-parse HEAD)" --title "Embarr $VERSION" \
       --notes "Download the zip, double-click it, and follow READ ME FIRST.txt inside."
   fi
   echo "Uploaded to https://github.com/$REPO/releases/tag/$TAG"

@@ -1,4 +1,4 @@
-// Draws Ember Bar's app icon (a cup on a warm gradient) into an .iconset folder; scripts/bundle.sh turns it into .icns.
+// Draws Embarr's app icon (a cup on a warm gradient) into an .iconset folder; scripts/bundle.sh turns it into .icns.
 // Run: swift scripts/make-icon.swift <out.iconset>
 import AppKit
 

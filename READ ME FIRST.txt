@@ -1,4 +1,4 @@
-Ember Bar
+Embarr
 =========
 
 A small menu-bar app for Ember mugs and cups. It can hold your coffee cooler than Ember's own app allows (below
@@ -8,18 +8,18 @@ Needs a Mac with macOS 14 (Sonoma) or newer and Bluetooth.
 
 1. Install
 ----------
-- Double-click the zip to unpack it, then drag "Ember Bar.app" into your Applications folder.
+- Double-click the zip to unpack it, then drag "Embarr.app" into your Applications folder.
 - Open it from Applications. macOS will say it can't check the app for malware: it's a private app that Apple
   hasn't reviewed. That's expected. To open it anyway:
     - Close that message (Done, or OK).
     - Within the hour, open System Settings > Privacy & Security, scroll down, and click "Open Anyway" next to
-      Ember Bar.
+      Embarr.
     - Click "Open Anyway" again in the box that appears, and confirm with your password or Touch ID.
   You only do this once per version.
 - Allow Bluetooth when it asks. If you clicked Don't Allow, the menu says "Bluetooth not allowed" and has a
-  button that opens the right page of System Settings: turn on Ember Bar there.
+  button that opens the right page of System Settings: turn on Embarr there.
 - Allow notifications too if you want a "coffee is ready" alert.
-- A cup icon appears in the menu bar at the top of the screen. Ember Bar has no Dock icon.
+- A cup icon appears in the menu bar at the top of the screen. Embarr has no Dock icon.
 
 
 2. Connect your mug
@@ -45,16 +45,16 @@ Needs a Mac with macOS 14 (Sonoma) or newer and Bluetooth.
   glide that steps down over time). "Save as program" keeps the slider's setting.
 - The slider holds any temperature. Its colors: blue is cool, amber at 120°F is where the mug holds by itself,
   red is hot.
-- Below 120°F the mug can't hold a temperature on its own, so Ember Bar turns the heater on in short bursts.
+- Below 120°F the mug can't hold a temperature on its own, so Embarr turns the heater on in short bursts.
   That only works while your Mac is on and near the mug. The coffee swings a few degrees around the goal.
 - Turn off / Turn on and Pause are near the top. Pause turns the heater off for a while and then goes back to your
   program by itself.
 - Rename your mug with the pencil next to its name (it's saved on the mug, so Ember's app shows it too).
 - Share programs: open the window (the small window icon), Programs, Share > Export programs. Send the file to
-  another Ember Bar user; they use Share > Import programs. Only the programs go in the file, not your mug.
+  another Embarr user; they use Share > Import programs. Only the programs go in the file, not your mug.
 
 
 If something's off, the app keeps a log at ~/Library/Logs/EmberBar.log.
 
-Ember Bar is free to use, change and share under the MIT License (see LICENSE). It is not made by or affiliated
+Embarr is free to use, change and share under the MIT License (see LICENSE). It is not made by or affiliated
 with Ember Technologies, Inc. Ember is their trademark.

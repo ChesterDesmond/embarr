@@ -33,7 +33,7 @@ public enum MugLimits {
     /// mug: target 45.00 read back as 45.00, yet the mug reported "Holding" at 48.89 for two hours.
     /// Any goal below this is reached by pulsing.
     public static let lowestHeld = 48.89
-    /// Whether Ember Bar has to pulse the heater to reach `goal`, because the mug won't hold it by itself.
+    /// Whether Embarr has to pulse the heater to reach `goal`, because the mug won't hold it by itself.
     /// The 0.01 slack keeps 120 F (48.8889 C, a whole-degree Fahrenheit slider stop) with the mug.
     public static func needsPulsing(_ goal: Double) -> Bool { goal < lowestHeld - 0.01 }
     /// Bottom of the temperature sliders (86 F).

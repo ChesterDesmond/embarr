@@ -1,6 +1,9 @@
-# Ember Bar
+# Embarr
 
 A menu-bar app for Ember mugs (built on Chester's Ember Cup 2), replacing Ember's own app.
+
+Called Ember Bar before 1.4. The internal names stay (bundle ID `com.chesterdesmond.embarr`, executable `EmberBar`, the log, the
+programs-file format), so settings, the paired mug and the Bluetooth permission carry over.
 
 - **Menu bar:** coffee temperature with the goal under it, on a cup tinted by what the heater is doing (orange
   heating or holding, blue cooling down to the goal, purple resting between pulses, teal heater off; it breathes
@@ -16,7 +19,7 @@ A menu-bar app for Ember mugs (built on Chester's Ember Cup 2), replacing Ember'
 - **On / Off / Pause** (popover and window): Turn off turns the heater off, Turn on goes back to the last program (a glide
   carries on where its clock says), Pause turns it off for 15 min, 30 min or an hour and then comes back by itself.
   While paused, Stay off ends the pause and keeps the heater off, and Resume goes back now.
-  A pause that ended more than 30 min before Ember Bar could act on it (app quit or Mac asleep) stays off, with a
+  A pause that ended more than 30 min before Embarr could act on it (app quit or Mac asleep) stays off, with a
   notification saying so.
 - **Window** (the window icon in the popover): full chart, preset and glide editor, LED color, units, heater tuning.
 - **Below 48.9 °C / 120 °F** the mug won't hold a temperature by itself, so the app pulses the heater (target 0 = off,
@@ -36,13 +39,13 @@ Share a copy: `./package.sh` builds `dist/Ember-Bar-<VERSION>.zip` (Apple silico
 Intel, macOS 14+, with `READ ME FIRST.txt` for the recipient); `package.sh --release` also uploads it as a release on
 the private GitHub repo. It is signed ad hoc, not notarized, so the recipient clicks "Open Anyway" once per version (and macOS may ask
 for Bluetooth permission again after an update, since each ad-hoc build counts as a new app).
-Check the layout without clicking the menu bar: `EMBERBAR_SNAPSHOT=/tmp/snap "build/Ember Bar.app/Contents/MacOS/EmberBar"`
+Check the layout without clicking the menu bar: `EMBERBAR_SNAPSHOT=/tmp/snap "build/Embarr.app/Contents/MacOS/EmberBar"`
 writes PNGs of the popover, the window pages and a highlighted button (it never touches the mug).
 Tests: `./test.sh` (plain `swift test` can't find swift-testing's macro plugin with only
 Command Line Tools installed; see ~/.claude/papercuts.md).
 Log: `~/Library/Logs/EmberBar.log`. One-off CLI: `./set-temp.sh 50`.
 
-Only one device can talk to the mug at a time: quit Ember's app (Mac or phone) or Ember Bar can't connect.
+Only one device can talk to the mug at a time: quit Ember's app (Mac or phone) or Embarr can't connect.
 Protocol notes are in `Sources/EmberCore/Protocol.swift`.
 
 ## License

@@ -77,7 +77,7 @@ final class MugManager: NSObject, ObservableObject {
     @Published var controller: HeaterController
     /// The mug's everyday light color, used whenever the active preset has no color of its own.
     @Published var homeLight: EmberCodec.RGB? { didSet { save() } }
-    /// Slowly blink the mug's light while Ember Bar is cycling the heater (pulsed holds and glides).
+    /// Slowly blink the mug's light while Embarr is cycling the heater (pulsed holds and glides).
     @Published var blinkWhileCycling: Bool { didSet { save() } }
     /// What the power button and Pause go back to, and when a pause ends.
     @Published private(set) var power: PowerMemory { didSet { save() } }
@@ -277,11 +277,11 @@ final class MugManager: NSObject, ObservableObject {
             let added = r.added == 1 ? "Added 1 program" : "Added \(r.added) programs"
             return r.skipped == 0 ? added + "." : added + ", skipped \(r.skipped) you already have."
         } catch ProgramFile.Problem.newerVersion {
-            return "That file is from a newer Ember Bar. Update Ember Bar, then import it again."
+            return "That file is from a newer Embarr. Update Embarr, then import it again."
         } catch ProgramFile.Problem.noPrograms {
             return "That file has no programs in it."
         } catch {
-            return "That isn't an Ember Bar programs file."
+            return "That isn't an Embarr programs file."
         }
     }
 
@@ -325,7 +325,7 @@ final class MugManager: NSObject, ObservableObject {
         guard power.pausedUntil != nil, !power.isPaused(now: Date()) else { return }
         guard let back = power.dueResume(now: Date()) else {
             log("power: pause ended long ago, staying off")
-            notify("Heater still off", "Your pause ended while Ember Bar was away from the mug. Click Turn on to go back to your program.")
+            notify("Heater still off", "Your pause ended while Embarr was away from the mug. Click Turn on to go back to your program.")
             return
         }
         setByPower(back.mode, presetID: back.presetID)
@@ -421,7 +421,7 @@ final class MugManager: NSObject, ObservableObject {
         connect(p)
     }
 
-    /// Lets go of this mug (heater off if Ember Bar was pulsing it, light back to steady) and goes back to listing
+    /// Lets go of this mug (heater off if Embarr was pulsing it, light back to steady) and goes back to listing
     /// mugs nearby. What belonged to that mug goes too: its light color and the learned overshoot.
     func forgetMug() {
         releaseMug()
@@ -555,7 +555,7 @@ final class MugManager: NSObject, ObservableObject {
         let learned = controller.overshoot
         let out = controller.update(now: Date(), temp: temp, state: state, mode: mode)
         // Save what learned, and the pour time, so a relaunch mid-cup picks the glide up where it was.
-        // Also once a minute, so a relaunch knows how long Ember Bar was away from the mug (`lastSeen`).
+        // Also once a minute, so a relaunch knows how long Embarr was away from the mug (`lastSeen`).
         if controller.overshoot != learned || out.events.contains(.filled) || out.events.contains(.emptied)
             || tick % 20 == 0 { save() }
         goal = out.goal
@@ -605,7 +605,7 @@ final class MugManager: NSObject, ObservableObject {
 
     /// Puts the active preset's color (or the everyday one) on the mug. Re-run every poll (3 s). The blink half is read off the clock and lasts 6 s, twice the poll, so neither
     /// timer jitter nor the extra polls push events trigger can skip a half. It blinks only while the current
-    /// goal is one Ember Bar pulses, not during a glide step the mug holds by itself.
+    /// goal is one Embarr pulses, not during a glide step the mug holds by itself.
     private func updateLight() {
         guard link == .connected, let base = lightBase else { return }
         let blinking = blinkWhileCycling && state.hasLiquid && goal.map(MugLimits.needsPulsing) == true
@@ -627,7 +627,7 @@ final class MugManager: NSObject, ObservableObject {
         RunLoop.main.run(until: Date().addingTimeInterval(0.5))
     }
 
-    /// Leaves the mug safe to walk away from: heater off if Ember Bar was pulsing it below what the mug holds by
+    /// Leaves the mug safe to walk away from: heater off if Embarr was pulsing it below what the mug holds by
     /// itself, and the light on its steady color rather than the dim half of a blink. The writes are queued; the caller
     /// keeps the link open long enough for them to land.
     private func releaseMug() {
@@ -781,7 +781,7 @@ extension MugManager: CBPeripheralDelegate {
             if uuid == EmberUUID.mugName {
                 mugProblem = "The mug didn't accept the new name. " + setUp
             } else if refusedWrites >= 3, mugProblem == nil {
-                mugProblem = "The mug isn't accepting Ember Bar's settings. " + setUp
+                mugProblem = "The mug isn't accepting Embarr's settings. " + setUp
             }
         }
     }
