@@ -79,6 +79,9 @@ final class MugManager: NSObject, ObservableObject {
     @Published var homeLight: EmberCodec.RGB? { didSet { save() } }
     /// Slowly blink the mug's light while Embarr is cycling the heater (pulsed holds and glides).
     @Published var blinkWhileCycling: Bool { didSet { save() } }
+    /// Ask "heater on or off?" once the mug has been off the charger a minute with coffee in it (Settings > General).
+    @Published var askOffCharger: Bool { didSet { save() } }
+    private var chargerWatch = ChargerWatch()
     /// What the power button and Pause go back to, and when a pause ends.
     @Published private(set) var power: PowerMemory { didSet { save() } }
     /// Which page the main window shows, and a program the window should open in its editor (set from the popover).
@@ -146,6 +149,7 @@ final class MugManager: NSObject, ObservableObject {
         controller = load("controller") ?? HeaterController()
         homeLight = load("homeLight")
         blinkWhileCycling = load("blinkWhileCycling") ?? true
+        askOffCharger = load("askOffCharger") ?? true
         var memory: PowerMemory = load("power") ?? PowerMemory()
         if memory.resumeMode == nil, savedMode != .off { memory.chose(savedMode, presetID: savedPresetID) }
         power = memory
@@ -163,7 +167,10 @@ final class MugManager: NSObject, ObservableObject {
             }
         }
         central = CBCentralManager(delegate: self, queue: .main)
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
+        let center = UNUserNotificationCenter.current()
+        center.delegate = self
+        center.setNotificationCategories(OffCharger.categories)
+        center.requestAuthorization(options: [.alert, .sound]) { _, _ in }
     }
 
     // MARK: Settings
@@ -180,6 +187,7 @@ final class MugManager: NSObject, ObservableObject {
         put(controller, "controller")
         put(homeLight, "homeLight")
         put(blinkWhileCycling, "blinkWhileCycling")
+        put(askOffCharger, "askOffCharger")
         put(power, "power")
     }
 
@@ -537,6 +545,7 @@ final class MugManager: NSObject, ObservableObject {
         runController()
         updateLight()
         updateIconAnimation()
+        checkCharger()
         if let t = temp, tick % 20 == 0 {
             log(String(format: "sample coffee %.2f state %@ mug-target %.2f goal %@ pulsing %@ overshoot %.2f", t, state.label,
                        mugTarget ?? -1, goal.map { String(format: "%.2f", $0) } ?? "none", pulsing ? "yes" : "no", controller.overshoot))
@@ -675,6 +684,40 @@ final class MugManager: NSObject, ObservableObject {
         }
     }
 
+    // MARK: Off the charger
+
+    private func checkCharger() {
+        guard askOffCharger else { return }
+        let onCharger = link == .connected ? battery?.charging : nil
+        switch chargerWatch.update(now: Date(), onCharger: onCharger, hasLiquid: state.hasLiquid, heaterOn: isOn) {
+        case .ask(let heaterOn)?:
+            log("charger: off for a minute, asking (heater \(heaterOn ? "on" : "off"))")
+            let content = UNMutableNotificationContent()
+            content.title = "\(name) is off the charger"
+            let left = battery.map { " (\($0.percent)% battery)" } ?? ""
+            content.body = heaterOn
+                ? "The heater is on and running on the battery\(left). Keep it on?"
+                : "The heater is off. Turn it on?"
+            content.sound = .default
+            content.categoryIdentifier = heaterOn ? OffCharger.heaterOnCategory : OffCharger.heaterOffCategory
+            UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: OffCharger.id, content: content, trigger: nil))
+        case .withdraw?:
+            log("charger: back on the charger")
+            UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [OffCharger.id])
+        case nil:
+            break
+        }
+    }
+
+    fileprivate func answerOffCharger(_ action: String) {
+        chargerWatch.answered()
+        switch action {
+        case OffCharger.turnOn: log("charger: answered Turn On"); if !isOn { turnOn() }
+        case OffCharger.turnOff: log("charger: answered Turn Off"); turnOff()
+        default: log("charger: answered \(action)")
+        }
+    }
+
     private func notify(_ title: String, _ body: String) {
         let content = UNMutableNotificationContent()
         content.title = title
@@ -799,14 +842,22 @@ extension MugManager: CBPeripheralDelegate {
             case EmberUUID.liquidState:
                 state = EmberCodec.decodeLiquidState(data)
                 if state == .unknown { log("unrecognized liquid state byte \(data.first ?? 0)") }
-            case EmberUUID.battery: battery = EmberCodec.decodeBattery(data); checkBattery()
+            case EmberUUID.battery:
+                let before = battery?.charging
+                battery = EmberCodec.decodeBattery(data)
+                if let now = battery?.charging, before != now { log("charger: \(now ? "on" : "off") the charger, battery \(battery?.percent ?? -1)%") }
+                checkBattery()
             case EmberUUID.liquidLevel: level = data.first.map(Int.init)
             case EmberUUID.firmware: firmware = EmberCodec.decodeFirmware(data)
             case EmberUUID.mugName: if let n = EmberCodec.decodeName(data) { name = n }
             case EmberUUID.ledColor:
                 led = EmberCodec.decodeLED(data)
                 if homeLight == nil, let l = led { homeLight = l }  // first connect: adopt the mug's own color
-            case EmberUUID.pushEvents: poll()
+            case EmberUUID.pushEvents:
+                // 2 = put on the charger, 3 = taken off it (python-ember-mug). Read the battery now rather than at the
+                // next 30-second battery poll.
+                if let e = data.first, e == 2 || e == 3, let c = chars[EmberUUID.battery] { p.readValue(for: c) }
+                poll()
             default: break
             }
         }
@@ -829,6 +880,43 @@ final class IconClock: ObservableObject {
                     MainActor.assumeIsolated { self?.frame &+= 1 }
                 }
             }
+        }
+    }
+}
+
+/// The off-the-charger question's notification: its id and its two pairs of buttons.
+enum OffCharger {
+    static let id = "off-charger"
+    static let heaterOffCategory = "off-charger.heater-off"
+    static let heaterOnCategory = "off-charger.heater-on"
+    static let turnOn = "turn-on", turnOff = "turn-off", leave = "leave"
+
+    static var categories: Set<UNNotificationCategory> {
+        [UNNotificationCategory(identifier: heaterOffCategory, actions: [
+            UNNotificationAction(identifier: turnOn, title: "Turn On"),
+            UNNotificationAction(identifier: leave, title: "Leave Off"),
+         ], intentIdentifiers: []),
+         UNNotificationCategory(identifier: heaterOnCategory, actions: [
+            UNNotificationAction(identifier: leave, title: "Keep On"),
+            UNNotificationAction(identifier: turnOff, title: "Turn Off"),
+         ], intentIdentifiers: [])]
+    }
+}
+
+extension MugManager: UNUserNotificationCenterDelegate {
+    /// Show Embarr's notifications even while its popover or window is in front.
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification,
+                                            withCompletionHandler done: @escaping (UNNotificationPresentationOptions) -> Void) {
+        done([.banner, .sound])
+    }
+
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
+                                            withCompletionHandler done: @escaping () -> Void) {
+        let action = response.actionIdentifier
+        let isOffCharger = response.notification.request.identifier == OffCharger.id
+        Task { @MainActor in
+            if isOffCharger { self.answerOffCharger(action) }
+            done()
         }
     }
 }

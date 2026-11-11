@@ -14,6 +14,11 @@ programs-file format), so settings, the paired mug and the Bluetooth permission 
   monitor on the status item's window.
 - **Battery** is drawn in green (50% and up, or charging), yellow (21–49%) or red (20% and below), with the icon's
   fill following the charge (`BatteryLook.swift`).
+- **Off the charger:** once the mug has been off the charger for a minute with coffee in it, a notification asks
+  about the heater: Turn On / Leave Off when it is off, Keep On / Turn Off when it is on. Asked once each time
+  the mug leaves the charger; putting it back removes the notification. A quick sip doesn't count. Settings >
+  General turns it off. It reads the battery characteristic's "on the charging base" byte (`ChargerWatch.swift`).
+  It only works while the mug is awake and connected.
 - **Open at Login** (Settings, or either menu) uses macOS's own Login Items list (`SMAppService`).
 - **Programs:** "+ New program" in the popover (a hold or a glide; the editor also offers heater off); right-click a program to rename, edit
   or delete it; "Save as program" keeps the slider's hold. Clicking the running program again undoes that click

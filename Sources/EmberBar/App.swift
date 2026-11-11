@@ -946,6 +946,9 @@ struct MugPage: View {
                     loginOn = LoginItem.isOn
                 }))
                 .onAppear { loginOn = LoginItem.isOn }
+                Toggle("Ask about the heater when the mug is off the charger", isOn: $mug.askOffCharger)
+                Text("After a minute off the charger with coffee in it, a notification asks whether to turn the heater on (or keep it on). Set Embarr's notifications to Alerts in System Settings to keep it on screen until you answer.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
             Section("Light") {
                 ColorPicker("Everyday mug light", selection: Binding(
