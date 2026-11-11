@@ -945,8 +945,18 @@ struct MugPage: View {
                     nameProblem = LoginItem.set($0)
                     loginOn = LoginItem.isOn
                 }))
-                .onAppear { loginOn = LoginItem.isOn }
+                .onAppear { loginOn = LoginItem.isOn; mug.refreshNotificationPermission() }
                 Toggle("Ask about the heater when the mug is off the charger", isOn: $mug.askOffCharger)
+                if !mug.notificationsAllowed {
+                    LabeledContent {
+                        Button("Open Notification Settings") {
+                            NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension?id=\(Bundle.main.bundleIdentifier ?? "")")!)
+                        }
+                    } label: {
+                        Label("Notifications are off for Embarr, so you won't see these questions or the ready alerts.", systemImage: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.orange)
+                    }
+                }
                 Text("After a minute off the charger, a notification asks whether to turn the heater on (or keep it on). Set Embarr's notifications to Alerts in System Settings to keep it on screen until you answer.")
                     .font(.caption).foregroundStyle(.secondary)
             }

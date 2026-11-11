@@ -82,6 +82,15 @@ final class MugManager: NSObject, ObservableObject {
     /// Ask "heater on or off?" once the mug has been off the charger a minute (Settings > General).
     @Published var askOffCharger: Bool { didSet { save() } }
     private var chargerWatch = ChargerWatch()
+    /// False when macOS blocks Embarr's notifications (Settings shows a warning and a button to fix it).
+    @Published private(set) var notificationsAllowed = true
+
+    func refreshNotificationPermission() {
+        UNUserNotificationCenter.current().getNotificationSettings { settings in
+            let ok = settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional
+            Task { @MainActor in if self.notificationsAllowed != ok { self.notificationsAllowed = ok } }
+        }
+    }
     /// What the power button and Pause go back to, and when a pause ends.
     @Published private(set) var power: PowerMemory { didSet { save() } }
     /// Which page the main window shows, and a program the window should open in its editor (set from the popover).
@@ -170,7 +179,10 @@ final class MugManager: NSObject, ObservableObject {
         let center = UNUserNotificationCenter.current()
         center.delegate = self
         center.setNotificationCategories(OffCharger.categories)
-        center.requestAuthorization(options: [.alert, .sound]) { _, _ in }
+        center.requestAuthorization(options: [.alert, .sound]) { granted, error in
+            let why = error.map { ", \($0.localizedDescription)" } ?? ""
+            Task { @MainActor in self.log("notifications: \(granted ? "allowed" : "not allowed")\(why)"); self.refreshNotificationPermission() }
+        }
     }
 
     // MARK: Settings
@@ -700,7 +712,10 @@ final class MugManager: NSObject, ObservableObject {
                 : "The heater is off. Turn it on?"
             content.sound = .default
             content.categoryIdentifier = heaterOn ? OffCharger.heaterOnCategory : OffCharger.heaterOffCategory
-            UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: OffCharger.id, content: content, trigger: nil))
+            UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: OffCharger.id, content: content, trigger: nil)) { error in
+                guard let error else { return }
+                Task { @MainActor in self.log("notifications: couldn't post, \(error.localizedDescription)") }
+            }
         case .withdraw?:
             log("charger: back on the charger")
             UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [OffCharger.id])
