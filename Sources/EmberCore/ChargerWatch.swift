@@ -5,7 +5,7 @@ import Foundation
 ///
 /// The mug's battery characteristic says whether it sits on the charging coaster (python-ember-mug calls it
 /// `on_charging_base`; it stays set at 100%). Lifting the mug for a sip clears it for a few seconds, so the
-/// question waits until the mug has been off the charger for `delay` with coffee in it, and is asked once per
+/// question waits until the mug has been off the charger for `delay`, and is asked once per
 /// time off the charger. Putting it back withdraws the question.
 public struct ChargerWatch: Equatable, Sendable {
     public enum Action: Equatable, Sendable {
@@ -24,8 +24,9 @@ public struct ChargerWatch: Equatable, Sendable {
     public init() {}
 
     /// Feed each reading. `onCharger` is nil when unknown (no battery reading yet, or the link is down), which
-    /// changes nothing.
-    public mutating func update(now: Date, onCharger: Bool?, hasLiquid: Bool, heaterOn: Bool) -> Action? {
+    /// changes nothing. The mug's own liquid state isn't consulted: it reads "Empty" when a cool drink goes in
+    /// with the heater off (seen 2026-11-11), which is exactly when the question matters.
+    public mutating func update(now: Date, onCharger: Bool?, heaterOn: Bool) -> Action? {
         guard let onCharger else { return nil }
         if onCharger {
             offSince = nil
@@ -34,7 +35,7 @@ public struct ChargerWatch: Equatable, Sendable {
         }
         let since = offSince ?? now
         offSince = since
-        guard !asked, hasLiquid, now.timeIntervalSince(since) >= Self.delay else { return nil }
+        guard !asked, now.timeIntervalSince(since) >= Self.delay else { return nil }
         asked = true
         return .ask(heaterOn: heaterOn)
     }

@@ -79,7 +79,7 @@ final class MugManager: NSObject, ObservableObject {
     @Published var homeLight: EmberCodec.RGB? { didSet { save() } }
     /// Slowly blink the mug's light while Embarr is cycling the heater (pulsed holds and glides).
     @Published var blinkWhileCycling: Bool { didSet { save() } }
-    /// Ask "heater on or off?" once the mug has been off the charger a minute with coffee in it (Settings > General).
+    /// Ask "heater on or off?" once the mug has been off the charger a minute (Settings > General).
     @Published var askOffCharger: Bool { didSet { save() } }
     private var chargerWatch = ChargerWatch()
     /// What the power button and Pause go back to, and when a pause ends.
@@ -669,7 +669,7 @@ final class MugManager: NSObject, ObservableObject {
         log("event: \(e)")
         switch e {
         case .ready(let target):
-            notify("Coffee is ready", "It's at \(unit.format(target))\(unit.rawValue).")
+            notify("Your drink is ready", "It's at \(unit.format(target))\(unit.rawValue).")
         case .filled, .emptied:
             break
         }
@@ -689,7 +689,7 @@ final class MugManager: NSObject, ObservableObject {
     private func checkCharger() {
         guard askOffCharger else { return }
         let onCharger = link == .connected ? battery?.charging : nil
-        switch chargerWatch.update(now: Date(), onCharger: onCharger, hasLiquid: state.hasLiquid, heaterOn: isOn) {
+        switch chargerWatch.update(now: Date(), onCharger: onCharger, heaterOn: isOn) {
         case .ask(let heaterOn)?:
             log("charger: off for a minute, asking (heater \(heaterOn ? "on" : "off"))")
             let content = UNMutableNotificationContent()

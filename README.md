@@ -5,7 +5,7 @@ A menu-bar app for Ember mugs (built on Chester's Ember Cup 2), replacing Ember'
 Called Ember Bar before 1.4. The internal names stay (bundle ID `com.chesterdesmond.embarr`, executable `EmberBar`, the log, the
 programs-file format), so settings, the paired mug and the Bluetooth permission carry over.
 
-- **Menu bar:** coffee temperature with the goal under it, on a cup tinted by what the heater is doing (orange
+- **Menu bar:** drink temperature with the goal under it, on a cup tinted by what the heater is doing (orange
   heating or holding, blue cooling down to the goal, purple resting between pulses, teal heater off; it breathes
   while heating or cooling). Click for programs, a hold slider and a 20-minute chart.
 - **Right-click** (or Control-click) the menu-bar icon for a menu: the mug's status and battery, Open Embarr,
@@ -14,10 +14,11 @@ programs-file format), so settings, the paired mug and the Bluetooth permission 
   monitor on the status item's window.
 - **Battery** is drawn in green (50% and up, or charging), yellow (21–49%) or red (20% and below), with the icon's
   fill following the charge (`BatteryLook.swift`).
-- **Off the charger:** once the mug has been off the charger for a minute with coffee in it, a notification asks
+- **Off the charger:** once the mug has been off the charger for a minute, a notification asks
   about the heater: Turn On / Leave Off when it is off, Keep On / Turn Off when it is on. Asked once each time
   the mug leaves the charger; putting it back removes the notification. A quick sip doesn't count. Settings >
-  General turns it off. It reads the battery characteristic's "on the charging base" byte (`ChargerWatch.swift`).
+  General turns it off. It doesn't wait for the mug to sense a drink: the mug reads "Empty" when a cool
+  drink goes in with the heater off. It reads the battery characteristic's "on the charging base" byte (`ChargerWatch.swift`).
   It only works while the mug is awake and connected.
 - **Open at Login** (Settings, or either menu) uses macOS's own Login Items list (`SMAppService`).
 - **Programs:** "+ New program" in the popover (a hold or a glide; the editor also offers heater off); right-click a program to rename, edit
@@ -35,16 +36,16 @@ programs-file format), so settings, the paired mug and the Bluetooth permission 
   notification saying so.
 - **Window** (the window icon in the popover): full chart, preset and glide editor, LED color, units, heater tuning.
 - **Below 48.9 °C / 120 °F** the mug won't hold a temperature by itself, so the app pulses the heater (target 0 = off,
-  45 = on) and learns how far the coffee keeps warming after each burst. This only runs while the Mac is connected.
+  45 = on) and learns how far the drink keeps warming after each burst. This only runs while the Mac is connected.
   The firmware *accepts* targets down to 45 °C but still holds 48.89 (measured 2026-11-05 with coffee in it).
-  Pulsed presets show an approximate average, since the coffee swings a little around the goal.
+  Pulsed presets show an approximate average, since the drink swings a little around the goal.
 - **Mug light:** an everyday color, optionally a color per preset, and a slow blink (6 s bright, 6 s dim) while the
   app is pulsing the heater toward the goal.
 - **Bursts** are capped at 8 s: the mug's sensor lags the heater and then spikes (a 30 s burst read +14 °C a minute
   later), so the app waits for each burst's reading to peak before starting the next.
 - **Glide:** a schedule of targets counted from when you pour (e.g. 45 → 41 → 37).
   A relaunch or a Bluetooth drop keeps the glide where it was. The app counts it as a new cup (glide restarts)
-  only if it was out of touch for 15+ minutes and the coffee came back at least 3 °C hotter, i.e. a refill.
+  only if it was out of touch for 15+ minutes and the drink came back at least 3 °C hotter, i.e. a refill.
 
 Install or update: `./install.sh` (builds, installs to /Applications, relaunches).
 Share a copy: `./package.sh` builds `dist/Ember-Bar-<VERSION>.zip` (Apple silicon and

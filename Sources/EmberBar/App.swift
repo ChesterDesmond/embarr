@@ -219,7 +219,7 @@ extension MugManager {
 
     func pulsedSuffix(_ mode: Mode) -> String { mode.isCycling ? ", pulsed" : "" }
 
-    /// "≈ 112°F / 44°C avg" for modes Embarr cycles (the coffee swings, so the target alone misleads).
+    /// "≈ 112°F / 44°C avg" for modes Embarr cycles (the drink swings, so the target alone misleads).
     func averageNote(_ mode: Mode) -> String? {
         guard mode.isCycling, let a = controller.approxAverage(mode) else { return nil }
         if case .glide = mode { return "≈ \(unit.dual(a)) avg over a 30-min cup" }
@@ -619,8 +619,8 @@ struct NowPage: View {
                                 RectangleMark(x: .value("Time", s.time), width: .fixed(3))
                                     .foregroundStyle(.orange.opacity(0.12))
                             }
-                            LineMark(x: .value("Time", s.time), y: .value("Coffee", mug.unit.display(s.temp)),
-                                     series: .value("s", "Coffee"))
+                            LineMark(x: .value("Time", s.time), y: .value("Drink", mug.unit.display(s.temp)),
+                                     series: .value("s", "Drink"))
                                 .foregroundStyle(.orange)
                             if let g = s.goal {
                                 LineMark(x: .value("Time", s.time), y: .value("Goal", mug.unit.display(g)),
@@ -632,7 +632,7 @@ struct NowPage: View {
                     }
                     .chartYScale(domain: .automatic(includesZero: false))
                     .frame(height: 280)
-                    Text("Orange line: coffee. Dashed: goal. Shaded: heater on.").font(.caption).foregroundStyle(.secondary)
+                    Text("Orange line: drink. Dashed: goal. Shaded: heater on.").font(.caption).foregroundStyle(.secondary)
                 } else {
                     Text("The chart fills in while the mug is connected.").foregroundStyle(.secondary).frame(height: 120)
                 }
@@ -763,22 +763,22 @@ struct ModeGuide: View {
         let off = stride(from: 0.0, through: 1.0, by: 0.05).map { CGPoint(x: $0, y: 0.08 + 0.84 * (1 - exp(-2.5 * $0))) }
         return [
             Entry(title: "Hold, \(floor) and up",
-                  text: "The mug keeps the coffee at that temperature by itself, even when the Mac is asleep or away.",
+                  text: "The mug keeps your drink at that temperature by itself, even when the Mac is asleep or away.",
                   sketch: [.init(x: 0, y: 0.08), .init(x: 0.25, y: 0.45), .init(x: 0.35, y: 0.5), .init(x: 1, y: 0.5)],
                   tint: TempColor.color(55)),
             Entry(title: "Hold, below \(floor)",
-                  text: "The mug won't hold this low, so Embarr switches the heater on in short bursts. The Mac has to be on and near the mug. The coffee swings a little around the goal, so these programs show an average.",
+                  text: "The mug won't hold this low, so Embarr switches the heater on in short bursts. The Mac has to be on and near the mug. The drink swings a little around the goal, so these programs show an average.",
                   sketch: [.init(x: 0, y: 0.08), .init(x: 0.3, y: 0.62), .init(x: 0.4, y: 0.72), .init(x: 0.47, y: 0.62),
                            .init(x: 0.6, y: 0.72), .init(x: 0.67, y: 0.62), .init(x: 0.8, y: 0.72), .init(x: 0.87, y: 0.62),
                            .init(x: 1, y: 0.72)],
                   tint: TempColor.color(42)),
             Entry(title: "Glide",
-                  text: "Steps the goal down over time, counted from when you pour, for coffee that tastes different as it cools. Embarr changes each step, so keep the Mac near the mug.",
+                  text: "Steps the goal down over time, counted from when you pour, for a drink that tastes different as it cools. Embarr changes each step, so keep the Mac near the mug.",
                   sketch: [.init(x: 0, y: 0.08), .init(x: 0.15, y: 0.3), .init(x: 0.4, y: 0.3), .init(x: 0.48, y: 0.5),
                            .init(x: 0.7, y: 0.5), .init(x: 0.78, y: 0.7), .init(x: 1, y: 0.7)],
                   tint: TempColor.color(48)),
             Entry(title: "Heater off",
-                  text: "Nothing heats. The coffee cools on its own, the way \"Just let it cool\" works.",
+                  text: "Nothing heats. The drink cools on its own, the way \"Just let it cool\" works.",
                   sketch: off, tint: .secondary),
         ]
     }
@@ -850,7 +850,7 @@ struct PresetEditor: View {
             .pickerStyle(.segmented)
             switch preset.mode {
             case .off:
-                Text("Heater stays off; the coffee cools on its own.")
+                Text("Heater stays off; the drink cools on its own.")
             case .hold(let t):
                 let binding = Binding(get: { t }, set: { preset.mode = .hold($0) })
                 HStack {
@@ -947,7 +947,7 @@ struct MugPage: View {
                 }))
                 .onAppear { loginOn = LoginItem.isOn }
                 Toggle("Ask about the heater when the mug is off the charger", isOn: $mug.askOffCharger)
-                Text("After a minute off the charger with coffee in it, a notification asks whether to turn the heater on (or keep it on). Set Embarr's notifications to Alerts in System Settings to keep it on screen until you answer.")
+                Text("After a minute off the charger, a notification asks whether to turn the heater on (or keep it on). Set Embarr's notifications to Alerts in System Settings to keep it on screen until you answer.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section("Light") {
@@ -969,7 +969,7 @@ struct MugPage: View {
                         Button("Reset") { mug.resetLearning() }
                     }
                 }
-                Text("After each burst the coffee keeps warming a little. Embarr measures how much and cuts the heater that much earlier next time.")
+                Text("After each burst the drink keeps warming a little. Embarr measures how much and cuts the heater that much earlier next time.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section("Mug") {
