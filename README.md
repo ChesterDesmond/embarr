@@ -2,8 +2,9 @@
 
 A menu-bar app for Ember mugs (built on Chester's Ember Cup 2), replacing Ember's own app.
 
-Called Ember Bar before 1.4. The internal names stay (bundle ID `com.chesterdesmond.embarr`, executable `EmberBar`, the log, the
-programs-file format), so settings, the paired mug and the Bluetooth permission carry over.
+Called Ember Bar before 1.4. Some internal names stay (executable `EmberBar`, the log, the programs-file format). The bundle ID
+became `com.chesterdesmond.embarr` in 1.6, so 1.6 starts with fresh settings: pick the mug again, allow Bluetooth again, and
+re-import programs if you exported them.
 
 - **Menu bar:** drink temperature with the goal under it, on a cup tinted by what the heater is doing (orange
   heating or holding, blue cooling down to the goal, purple resting between pulses, teal heater off; it breathes
