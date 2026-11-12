@@ -48,9 +48,9 @@ programs-file format), so settings, the paired mug and the Bluetooth permission 
   only if it was out of touch for 15+ minutes and the drink came back at least 3 °C hotter, i.e. a refill.
 
 Install or update: `./install.sh` (builds, installs to /Applications, relaunches).
-Share a copy: `./package.sh` builds `dist/Ember-Bar-<VERSION>.zip` (Apple silicon and
+Share a copy: `./package.sh` builds `dist/Embarr-<VERSION>.zip` (Apple silicon and
 Intel, macOS 14+, with `READ ME FIRST.txt` for the recipient); `package.sh --release` also uploads it as a release on
-the private GitHub repo. It is signed ad hoc, not notarized, so the recipient clicks "Open Anyway" once per version (and macOS may ask
+the GitHub repo. It is signed ad hoc, not notarized, so the recipient clicks "Open Anyway" once per version (and macOS may ask
 for Bluetooth permission again after an update, since each ad-hoc build counts as a new app).
 Check the layout without clicking the menu bar: `EMBERBAR_SNAPSHOT=/tmp/snap "build/Embarr.app/Contents/MacOS/EmberBar"`
 writes PNGs of the popover, the window pages and a highlighted button (it never touches the mug).

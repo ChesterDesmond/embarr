@@ -1,11 +1,11 @@
 #!/bin/bash
 # Build a copy of Embarr to give to someone else: one app that runs on Apple silicon and Intel Macs (macOS 14+),
-# zipped with READ ME FIRST.txt. Output: dist/Ember-Bar-<version>.zip
-# Optional: package.sh --release   also uploads the zip as a GitHub release on the private repo.
+# zipped with READ ME FIRST.txt. Output: dist/Embarr-<version>.zip
+# Optional: package.sh --release   also uploads the zip as a GitHub release on the GitHub repo.
 set -euo pipefail
 cd "$(dirname "$0")"
 VERSION="$(cat VERSION)"
-REPO="ChesterDesmond/ember-bar"
+REPO="ChesterDesmond/embarr"
 TAG="v$VERSION"
 
 # A release is tagged at HEAD, so its zip must be built from exactly what is committed (untracked files included:

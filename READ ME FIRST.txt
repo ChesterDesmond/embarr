@@ -9,7 +9,7 @@ Needs a Mac with macOS 14 (Sonoma) or newer and Bluetooth.
 1. Install
 ----------
 - Double-click the zip to unpack it, then drag "Embarr.app" into your Applications folder.
-- Open it from Applications. macOS will say it can't check the app for malware: it's a private app that Apple
+- Open it from Applications. macOS will say it can't check the app for malware: it's an app that Apple
   hasn't reviewed. That's expected. To open it anyway:
     - Close that message (Done, or OK).
     - Within the hour, open System Settings > Privacy & Security, scroll down, and click "Open Anyway" next to
