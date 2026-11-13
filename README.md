@@ -6,9 +6,10 @@ Called Ember Bar before 1.4. Some internal names stay (executable `EmberBar`, th
 became `com.chesterdesmond.embarr` in 1.6, so 1.6 starts with fresh settings: pick the mug again, allow Bluetooth again, and
 re-import programs if you exported them.
 
-- **Menu bar:** drink temperature with the goal under it, on a cup tinted by what the heater is doing (orange
-  heating or holding, blue cooling down to the goal, purple resting between pulses, teal heater off; it breathes
-  while heating or cooling). Click for programs, a hold slider and a 20-minute chart.
+- **Menu bar:** a mug, then the drink's temperature with the goal under it. The mug fills with the battery's charge
+  (green 50% and up or charging, yellow 21–49%, red 20% and below); a flame flickers out of it while the heater is
+  on, and blue lines drift down into it while the drink cools toward the goal. Click for programs, a hold slider
+  and a 20-minute chart.
 - **Right-click** (or Control-click) the menu-bar icon for a menu: the mug's status and battery, Open Embarr,
   Settings…, heater on/off, Pause, Programs, Reconnect, Open at Login, About and Quit. The popover's "…" button has
   the app-level ones. SwiftUI's MenuBarExtra has no right-click, so `StatusMenu` catches it with a local event
@@ -21,6 +22,14 @@ re-import programs if you exported them.
   General turns it off. It doesn't wait for the mug to sense a drink: the mug reads "Empty" when a cool
   drink goes in with the heater off. It reads the battery characteristic's "on the charging base" byte (`ChargerWatch.swift`).
   It only works while the mug is awake and connected.
+- **Updates:** once a day Embarr asks GitHub for the latest release (`Updater.swift`). A newer one gets a notification
+  and an "Install Update (x.y)…" item in both menus; installing downloads the zip, checks it against the release's
+  `.sha256` file, checks the new app is signed by the same certificate as the running one, swaps it into place and
+  relaunches. Downloaded by the app itself, it isn't quarantined, so there's no "Open Anyway". Settings > General has
+  Check Now and the switch for the daily check. Releases must include `Embarr-<version>.zip.sha256` (package.sh writes
+  it) and are signed with the "Embarr" certificate (`scripts/make-signing-identity.sh`, once per build Mac; back up
+  `~/.config/embarr-signing/`, since an update signed with any other certificate is refused). The release notes the
+  dialog shows come from `release-notes/<version>.md`.
 - **Open at Login** (Settings, or either menu) uses macOS's own Login Items list (`SMAppService`).
 - **Programs:** "+ New program" in the popover (a hold or a glide; the editor also offers heater off); right-click a program to rename, edit
   or delete it; "Save as program" keeps the slider's hold. Clicking the running program again undoes that click

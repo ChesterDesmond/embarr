@@ -96,7 +96,7 @@ final class MugManager: NSObject, ObservableObject {
     /// Which page the main window shows, and a program the window should open in its editor (set from the popover).
     @Published var windowPage: WindowPage = .now
     @Published var editRequest: Preset?
-    /// Drives the menu-bar icon's breathing. Kept off MugManager's own @Published values so only the icon redraws.
+    /// Drives the menu-bar icon's animation (flame, cooling lines). Kept off MugManager's own @Published values so only the icon redraws.
     let iconClock = IconClock()
 
     private var central: CBCentralManager!
@@ -178,7 +178,7 @@ final class MugManager: NSObject, ObservableObject {
         central = CBCentralManager(delegate: self, queue: .main)
         let center = UNUserNotificationCenter.current()
         center.delegate = self
-        center.setNotificationCategories(OffCharger.categories)
+        center.setNotificationCategories(OffCharger.categories.union([Updater.category]))
         center.requestAuthorization(options: [.alert, .sound]) { granted, error in
             let why = error.map { ", \($0.localizedDescription)" } ?? ""
             Task { @MainActor in self.log("notifications: \(granted ? "allowed" : "not allowed")\(why)"); self.refreshNotificationPermission() }
@@ -213,7 +213,7 @@ final class MugManager: NSObject, ObservableObject {
         HeaterPhase(connected: link == .connected, state: state, temp: temp, goal: goal, pulsing: pulsing)
     }
 
-    /// Whether the menu-bar icon should be breathing right now.
+    /// Whether the menu-bar icon should be animating right now.
     private var iconAnimates: Bool { phase == .heating || phase == .coolingToGoal }
 
     private func updateIconAnimation() { iconClock.running = iconAnimates }
@@ -928,9 +928,13 @@ extension MugManager: UNUserNotificationCenterDelegate {
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
                                             withCompletionHandler done: @escaping () -> Void) {
         let action = response.actionIdentifier
-        let isOffCharger = response.notification.request.identifier == OffCharger.id
+        let id = response.notification.request.identifier
         Task { @MainActor in
-            if isOffCharger { self.answerOffCharger(action) }
+            if id == OffCharger.id { self.answerOffCharger(action) }
+            if id == Updater.notificationID {
+                if action == Updater.installAction { Updater.shared.install() }
+                else if action == UNNotificationDefaultActionIdentifier, let r = Updater.shared.available { Updater.shared.offer(r) }
+            }
             done()
         }
     }

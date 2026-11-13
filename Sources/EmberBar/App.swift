@@ -48,15 +48,39 @@ enum Snapshot {
             }
             write(VStack(alignment: .leading, spacing: 10) { Wordmark(size: 20); batteries }.padding().frame(width: 320, alignment: .leading),
                   size: NSSize(width: 320, height: 110), to: dir.appendingPathComponent("header-battery.png"))
+            // The menu-bar icon in each state (heating and cooling over a few animation frames), at 3x for checking.
+            let b = { (p: Int, c: Bool) in EmberCodec.Battery(percent: p, charging: c) }
+            let rows: [[(HeaterPhase, EmberCodec.Battery?, Int)]] = [
+                (0..<5).map { (.heating, b(85, false), $0 * 2) },
+                (0..<5).map { (.coolingToGoal, b(40, false), $0 * 2) },
+                [(.holding, b(100, false), 0), (.holding, b(60, true), 0), (.resting, b(35, false), 0),
+                 (.heaterOff, b(12, false), 0), (.unavailable, nil, 0)],
+            ]
+            let sheet = VStack(alignment: .leading, spacing: 6) {
+                ForEach(rows.indices, id: \.self) { r in
+                    HStack(spacing: 14) {
+                        ForEach(rows[r].indices, id: \.self) { i in
+                            let (phase, battery, frame) = rows[r][i]
+                            Image(nsImage: StatusIcon.image(phase: phase, temp: phase == .unavailable ? nil : "131°",
+                                                            goal: phase == .unavailable ? nil : "→120°", battery: battery, frame: frame))
+                        }
+                    }
+                }
+            }.padding(8).scaleEffect(3, anchor: .topLeading).frame(width: 1080, height: 300, alignment: .topLeading)
+            for (name, look) in [("menubar-dark.png", NSAppearance.Name.darkAqua), ("menubar-light.png", .aqua)] {
+                write(sheet.environment(\.colorScheme, look == .darkAqua ? .dark : .light), size: NSSize(width: 1080, height: 300),
+                      to: dir.appendingPathComponent(name), appearance: NSAppearance(named: look))
+            }
             write(PresetEditor(preset: Preset(name: "New program", mode: .hold(40)), save: { _ in }, cancel: {}).environmentObject(mug),
                   size: NSSize(width: 440, height: 360), to: dir.appendingPathComponent("editor.png"))
             exit(0)
         }
     }
 
-    private static func write<V: View>(_ view: V, size: NSSize, to url: URL) {
+    private static func write<V: View>(_ view: V, size: NSSize, to url: URL, appearance: NSAppearance? = nil) {
         let host = NSHostingView(rootView: view.background(Color(nsColor: .windowBackgroundColor)))
         let window = NSWindow(contentRect: NSRect(origin: .zero, size: size), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.appearance = appearance
         window.contentView = host
         window.setFrameOrigin(NSPoint(x: -10_000, y: -10_000))  // drawn for real, but off every screen
         window.orderFrontRegardless()
@@ -127,17 +151,24 @@ struct MenuLabel: View {
         Image(nsImage: StatusIcon.image(phase: phase,
                                         temp: showTemps ? mug.unit.format(mug.temp) : nil,
                                         goal: showTemps ? mug.goal.map { "→" + mug.unit.format($0) } : nil,
+                                        battery: mug.link == .connected ? mug.battery : nil,
                                         frame: clock.frame))
             .onAppear {
                 AppActions.openWindow = openWindow
-                if !Snapshot.requested { StatusMenu.shared.install(mug: mug) }
+                if !Snapshot.requested { StatusMenu.shared.install(mug: mug); Updater.shared.start() }
             }
     }
 }
 
-/// The menu-bar icon: a cup tinted by what the heater is doing, the coffee's temperature and, under it in
-/// smaller type, the goal. Drawn at display time so the text follows the menu bar's light or dark look.
+/// The menu-bar icon, for a glance at three things: a mug whose fill shows the battery (level and color, green /
+/// yellow / red as in the popover), a flame flickering out of it while the heater is on, or blue lines drifting down
+/// into it while the drink cools toward the goal; then the drink's temperature, with the goal under it in smaller
+/// type. Drawn at display time so the outline and text follow the menu bar's light or dark look.
 enum StatusIcon {
+    static let flame = NSColor.systemOrange
+    static let cooling = NSColor.systemBlue
+
+    /// What the heater is doing, as a color (the right-click menu's status line).
     static func tint(_ phase: HeaterPhase) -> NSColor {
         switch phase {
         case .unavailable: .labelColor
@@ -148,34 +179,23 @@ enum StatusIcon {
         }
     }
 
-    /// Breathing, in frames of 1/6 s: quicker while heating, slow while cooling down. Nil = steady.
-    static func period(_ phase: HeaterPhase) -> Double? {
-        switch phase {
-        case .heating: 10
-        case .coolingToGoal: 18
-        default: nil
-        }
-    }
-
-    static func image(phase: HeaterPhase, temp: String?, goal: String?, frame: Int) -> NSImage {
-        let symbolName = phase == .heating ? "cup.and.heat.waves.fill" : "cup.and.saucer.fill"
-        let config = NSImage.SymbolConfiguration(pointSize: 13, weight: .regular)
-            .applying(.init(paletteColors: [tint(phase)]))
-        let symbol = NSImage(systemSymbolName: symbolName, accessibilityDescription: "Ember mug")?
-            .withSymbolConfiguration(config) ?? NSImage()
-        let alpha = period(phase).map { 0.55 + 0.45 * (0.5 + 0.5 * cos(2 * .pi * Double(frame) / $0)) } ?? 1
-
+    static func image(phase: HeaterPhase, temp: String?, goal: String?, battery: EmberCodec.Battery?, frame: Int) -> NSImage {
         let big = NSFont.monospacedDigitSystemFont(ofSize: goal == nil ? 13 : 10.5, weight: goal == nil ? .regular : .semibold)
         let small = NSFont.monospacedDigitSystemFont(ofSize: 8.5, weight: .regular)
         let tempWidth = temp.map { ($0 as NSString).size(withAttributes: [.font: big]).width } ?? 0
         let goalWidth = goal.map { ($0 as NSString).size(withAttributes: [.font: small]).width } ?? 0
         let textWidth = ceil(max(tempWidth, goalWidth))
-        let height: CGFloat = 22
-        let size = NSSize(width: symbol.size.width + (textWidth > 0 ? 3 + textWidth : 0), height: height)
+        let height: CGFloat = 22, mugWidth: CGFloat = 17
+        let size = NSSize(width: mugWidth + (textWidth > 0 ? 3 + textWidth : 0), height: height)
 
         let image = NSImage(size: size, flipped: false) { _ in
-            symbol.draw(at: NSPoint(x: 0, y: (height - symbol.size.height) / 2), from: .zero, operation: .sourceOver, fraction: alpha)
-            let x = symbol.size.width + 3
+            drawMug(battery: battery, dimmed: phase == .unavailable && battery == nil)
+            switch phase {
+            case .heating: drawFlame(frame: frame)
+            case .coolingToGoal: drawCooling(frame: frame)
+            default: break
+            }
+            let x = mugWidth + 3
             if let goal, let temp {
                 (temp as NSString).draw(at: NSPoint(x: x, y: 9), withAttributes: [.font: big, .foregroundColor: NSColor.labelColor])
                 (goal as NSString).draw(at: NSPoint(x: x, y: 0.5), withAttributes: [.font: small, .foregroundColor: NSColor.secondaryLabelColor])
@@ -185,9 +205,79 @@ enum StatusIcon {
             }
             return true
         }
-        image.isTemplate = phase == .unavailable
-        image.accessibilityDescription = ["Ember mug", temp, goal.map { "goal \($0.dropFirst())" }].compactMap { $0 }.joined(separator: ", ")
+        image.accessibilityDescription = ["Ember mug", temp, goal.map { "goal \($0.dropFirst())" },
+                                          battery.map { "battery \($0.percent)%" }].compactMap { $0 }.joined(separator: ", ")
         return image
+    }
+
+    /// The mug's body: an open-topped cup from y 1 to 13 (x 1.5 to 12.5) with a handle on the right.
+    static let body = NSRect(x: 1.5, y: 1, width: 11, height: 12)
+
+    private static func bodyPath(_ r: NSRect) -> NSBezierPath {
+        let radius: CGFloat = 2.5
+        let p = NSBezierPath()
+        p.move(to: NSPoint(x: r.minX, y: r.maxY))
+        p.line(to: NSPoint(x: r.minX, y: r.minY + radius))
+        p.appendArc(withCenter: NSPoint(x: r.minX + radius, y: r.minY + radius), radius: radius, startAngle: 180, endAngle: 270)
+        p.line(to: NSPoint(x: r.maxX - radius, y: r.minY))
+        p.appendArc(withCenter: NSPoint(x: r.maxX - radius, y: r.minY + radius), radius: radius, startAngle: 270, endAngle: 360)
+        p.line(to: NSPoint(x: r.maxX, y: r.maxY))
+        return p
+    }
+
+    private static func drawMug(battery: EmberCodec.Battery?, dimmed: Bool) {
+        let ink = NSColor.labelColor.withAlphaComponent(dimmed ? 0.5 : 1)
+        // The fill: the battery's charge, as liquid in the mug.
+        if let battery {
+            let inner = body.insetBy(dx: 1.4, dy: 1.4)
+            let level = CGFloat(min(max(battery.percent, 0), 100)) / 100
+            NSGraphicsContext.saveGraphicsState()
+            let clip = bodyPath(inner); clip.close(); clip.addClip()
+            battery.tier.nsColor.setFill()
+            NSRect(x: inner.minX, y: inner.minY, width: inner.width, height: max(1, inner.height * level)).fill()
+            NSGraphicsContext.restoreGraphicsState()
+        }
+        ink.setStroke()
+        let outline = bodyPath(body); outline.lineWidth = 1.4; outline.lineCapStyle = .round; outline.stroke()
+        NSGraphicsContext.saveGraphicsState()
+        NSRect(x: body.maxX + 0.7, y: 0, width: 10, height: 22).clip()
+        let handle = NSBezierPath(roundedRect: NSRect(x: body.maxX - 3, y: 4, width: 6.5, height: 6.5), xRadius: 3, yRadius: 3)
+        handle.lineWidth = 1.4; handle.stroke()
+        NSGraphicsContext.restoreGraphicsState()
+    }
+
+    /// A flame rising out of the mug, flickering: its height and lean change every frame (1/6 s).
+    private static func drawFlame(frame: Int) {
+        let f = Double(frame)
+        let h = 7.2 + 1.1 * sin(f * 1.9) + 0.5 * sin(f * 3.7)
+        let lean = 0.9 * sin(f * 1.3)
+        let cx = body.midX, base = body.maxY + 0.3
+        func flame(width w: Double, height: Double) -> NSBezierPath {
+            let p = NSBezierPath()
+            let tip = NSPoint(x: cx + lean, y: base + height)
+            p.move(to: NSPoint(x: cx, y: base))
+            p.curve(to: tip, controlPoint1: NSPoint(x: cx - w * 1.15, y: base + height * 0.1),
+                    controlPoint2: NSPoint(x: cx - w * 0.2 + lean * 0.4, y: base + height * 0.65))
+            p.curve(to: NSPoint(x: cx, y: base), controlPoint1: NSPoint(x: cx + w * 0.3 + lean * 0.4, y: base + height * 0.65),
+                    controlPoint2: NSPoint(x: cx + w * 1.15, y: base + height * 0.1))
+            p.close()
+            return p
+        }
+        Self.flame.setFill(); flame(width: 4.2, height: h).fill()
+        NSColor.systemYellow.setFill(); flame(width: 2.0, height: h * 0.55).fill()
+    }
+
+    /// Three short blue lines drifting down into the mug, staggered, fading in at the top and out at the rim.
+    private static func drawCooling(frame: Int) {
+        let top: CGFloat = 21.5, bottom = body.maxY + 0.5, length: CGFloat = 3.5, cycle = 9
+        for (i, x) in [body.midX - 3.2, body.midX, body.midX + 3.2].enumerated() {
+            let t = CGFloat((frame + i * 3) % cycle) / CGFloat(cycle)  // 0 at the top, 1 at the rim
+            let y = top - (top - bottom - length) * t
+            let alpha = min(1, t * 4) * min(1, (1 - t) * 4)
+            cooling.withAlphaComponent(alpha).setStroke()
+            let p = NSBezierPath(); p.move(to: NSPoint(x: x, y: y)); p.line(to: NSPoint(x: x, y: y - length))
+            p.lineWidth = 1.5; p.lineCapStyle = .round; p.stroke()
+        }
     }
 }
 
@@ -946,6 +1036,7 @@ struct MugPage: View {
                     loginOn = LoginItem.isOn
                 }))
                 .onAppear { loginOn = LoginItem.isOn; mug.refreshNotificationPermission() }
+                UpdateRow()
                 Toggle("Ask about the heater when the mug is off the charger", isOn: $mug.askOffCharger)
                 if !mug.notificationsAllowed {
                     LabeledContent {

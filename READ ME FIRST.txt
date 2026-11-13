@@ -53,6 +53,9 @@ Needs a Mac with macOS 14 (Sonoma) or newer and Bluetooth.
 - Share programs: open the window (the small window icon), Programs, Share > Export programs. Send the file to
   another Embarr user; they use Share > Import programs. Only the programs go in the file, not your mug.
 
+- Updates install themselves: once a day Embarr checks for a new version and shows a notification. Click Install
+  Update (or right-click the menu-bar icon, Install Update) and it relaunches on the new version. No download, no
+  "Open Anyway". Settings > General has Check Now and the switch for the daily check.
 
 If something's off, the app keeps a log at ~/Library/Logs/EmberBar.log.
 

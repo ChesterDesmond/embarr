@@ -141,6 +141,7 @@ struct AppMenuButton: View {
             Divider()
             Toggle("Open at Login", isOn: Binding(get: { LoginItem.isOn }, set: { mug.mugProblem = LoginItem.set($0) }))
             Button("About Embarr") { AppActions.about() }
+            UpdateMenuButton()
             Divider()
             Button("Quit Embarr") { NSApp.terminate(nil) }
         } label: {
@@ -266,6 +267,10 @@ final class StatusMenu: NSObject {
         login.state = LoginItem.isOn ? .on : .off
         menu.addItem(login)
         menu.addItem(item("About Embarr") { AppActions.about() })
+        let update = item(Updater.shared.menuTitle) { Updater.shared.menuAction() }
+        update.isEnabled = Updater.shared.state != .installing && Updater.shared.state != .checking
+        if Updater.shared.available != nil { update.image = symbol("arrow.down.circle.fill", .systemOrange) }
+        menu.addItem(update)
         menu.addItem(.separator())
         menu.addItem(item("Quit Embarr", key: "q") { NSApp.terminate(nil) })
         return menu
@@ -278,4 +283,46 @@ private final class ClosureTarget: NSObject {
     let action: @MainActor () -> Void
     init(_ action: @escaping @MainActor () -> Void) { self.action = action }
     @objc func run() { action() }
+}
+
+// MARK: - Updates
+
+/// "Check for Updates…" (or "Install Update (1.9)…") in the popover's "…" menu.
+struct UpdateMenuButton: View {
+    @ObservedObject private var updater = Updater.shared
+    var body: some View {
+        Button(updater.menuTitle) { updater.menuAction() }
+            .disabled(updater.state == .installing || updater.state == .checking)
+    }
+}
+
+/// Settings > General: the version, the last check, Check Now / Install Update, and the automatic-check switch.
+struct UpdateRow: View {
+    @ObservedObject private var updater = Updater.shared
+
+    private var status: String {
+        switch updater.state {
+        case .checking: return "Checking…"
+        case .installing: return "Installing the update…"
+        case .available: return "Version \(updater.available?.version?.description ?? "") is available."
+        case .failed(let why): return "Last check failed: \(why)"
+        case .idle, .upToDate:
+            guard let last = updater.lastCheck else { return "Not checked yet." }
+            return "Up to date. Checked \(last.formatted(.relative(presentation: .named)))."
+        }
+    }
+
+    var body: some View {
+        LabeledContent {
+            if updater.available != nil {
+                Button("Install Update") { updater.install() }.disabled(updater.state == .installing)
+            } else {
+                Button("Check Now") { Task { await updater.check(userAsked: true) } }.disabled(updater.state == .checking)
+            }
+        } label: {
+            Text("Embarr \(updater.current.description)")
+            Text(status)
+        }
+        Toggle("Check for updates automatically", isOn: $updater.automatic)
+    }
 }

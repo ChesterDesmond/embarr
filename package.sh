@@ -35,6 +35,7 @@ rm -f "$ZIP"
 # its signature.
 ditto -c -k --norsrc --noextattr --keepParent "$STAGE" "$ZIP"
 rm -f dist/EmberBar-universal
+(cd dist && shasum -a 256 "$(basename "$ZIP")" > "$(basename "$ZIP").sha256")
 echo "Built $(pwd)/$ZIP"
 
 if [ "${1:-}" = "--release" ]; then
@@ -43,10 +44,13 @@ if [ "${1:-}" = "--release" ]; then
   TOKEN="$(gh auth token --user ChesterDesmond)"
   export GH_TOKEN="$TOKEN"
   if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
-    gh release upload "$TAG" "$ZIP" --repo "$REPO" --clobber
+    gh release upload "$TAG" "$ZIP" "$ZIP.sha256" --repo "$REPO" --clobber
   else
-    gh release create "$TAG" "$ZIP" --repo "$REPO" --target "$(git rev-parse HEAD)" --title "Embarr $VERSION" \
-      --notes "Download the zip, double-click it, and follow READ ME FIRST.txt inside."
+    # The release notes are what the in-app updater shows: release-notes/<version>.md when it exists.
+    NOTES="release-notes/$VERSION.md"
+    [ -f "$NOTES" ] || { echo "Download the zip, double-click it, and follow READ ME FIRST.txt inside." > dist/notes.md; NOTES=dist/notes.md; }
+    gh release create "$TAG" "$ZIP" "$ZIP.sha256" --repo "$REPO" --target "$(git rev-parse HEAD)" --title "Embarr $VERSION" \
+      --notes-file "$NOTES"
   fi
   echo "Uploaded to https://github.com/$REPO/releases/tag/$TAG"
 fi

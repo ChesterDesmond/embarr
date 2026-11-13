@@ -1,5 +1,8 @@
 #!/bin/bash
-# Wraps a built EmberBar binary as "Embarr.app" with its icon, and signs it ad hoc.
+# Wraps a built EmberBar binary as "Embarr.app" with its icon, and signs it: with the "Embarr" certificate when this
+# Mac has it (scripts/make-signing-identity.sh), else ad hoc. The certificate gives every build the same designated
+# requirement, so macOS keeps the Bluetooth permission across updates and the in-app updater can check that an
+# update was signed by the same certificate. An ad-hoc build can't update itself.
 # Usage: scripts/bundle.sh <binary> <out-dir>   (writes <out-dir>/Embarr.app)
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -37,4 +40,12 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>NSBluetoothAlwaysUsageDescription</key><string>Embarr talks to your Ember mug over Bluetooth.</string>
 </dict></plist>
 PLIST
-codesign --force --sign - "$APP"
+KC="$HOME/Library/Keychains/embarr-signing.keychain-db"; PWFILE="$HOME/.config/embarr-signing/password"
+if [ -f "$KC" ] && [ -f "$PWFILE" ]; then
+  security unlock-keychain -p "$(cat "$PWFILE")" "$KC"
+  HASH="$(security find-identity -p codesigning "$KC" | awk '/"Embarr"/ {print $2; exit}')"
+  codesign --force --sign "$HASH" --keychain "$KC" "$APP"
+else
+  echo "No Embarr signing certificate on this Mac: signing ad hoc (this build can't install updates)." >&2
+  codesign --force --sign - "$APP"
+fi
